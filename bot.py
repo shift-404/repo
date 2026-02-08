@@ -1,8 +1,3 @@
-"""
-БОТ ФЕРМИ "СМАК ПРИРОДИ" - ПОЛНЫЙ КОД ДЛЯ python-telegram-bot 21.7
-С ЗАЩИТОЙ ОТ КОНФЛИКТОВ И ДУБЛИРОВАНИЯ
-"""
-
 import os
 import json
 import sqlite3
@@ -23,13 +18,26 @@ from telegram.ext import (
     CallbackContext
 )
 
+# ==================== НАСТРОЙКА ЛОГГИРОВАНИЯ ====================
 
-# ==================== НАСТРОЙКА ====================
+# СНАЧАЛА создаем логгер
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ==================== ПОЛУЧЕНИЕ ТОКЕНА ====================
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    # Логируем ошибку и завершаем работу, если токен не задан
+    logger.error("❌ Токен не найден! Добавьте BOT_TOKEN в переменные окружения Scalingo")
     exit(1)
+
+logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
 
 # ==================== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ====================
 
@@ -47,7 +55,8 @@ def check_single_instance():
             logger.error("⚠️ Другой экземпляр бота уже запущен!")
             return False
         return True
-    except:
+    except Exception as e:
+        logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
         return True
 
 # ==================== БАЗА ДАННЫХ ====================
@@ -1597,6 +1606,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
