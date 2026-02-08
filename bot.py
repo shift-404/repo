@@ -7,6 +7,8 @@ import sys
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
+# ← ВАЖНО! Импорты telegram ДОЛЖНЫ быть ПОСЛЕ базовых импортов
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Application,
@@ -1606,6 +1608,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
