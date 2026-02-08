@@ -1,5 +1,0 @@
-{
-  "scripts": {
-    "first-deploy": "python bot.py"
-  }
-}
