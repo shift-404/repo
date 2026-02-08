@@ -23,50 +23,13 @@ from telegram.ext import (
     CallbackContext
 )
 
-# ==================== НАСТРОЙКА ====================
 
 # ==================== НАСТРОЙКА ====================
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
-
-# Способ 1: Переменная окружения Replit
 TOKEN = os.getenv("BOT_TOKEN")
-
-# Способ 2: Секрет Replit
 if not TOKEN:
-    try:
-        from replit import db  # Для Replit Database
-        TOKEN = db.get("BOT_TOKEN", "")
-    except:
-        pass
-
-# Способ 3: Файл .env
-if not TOKEN:
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        TOKEN = os.getenv("BOT_TOKEN")
-    except:
-        pass
-
-# Способ 4: Прямо в коде (ТОЛЬКО ДЛЯ ТЕСТА!)
-if not TOKEN:
-    TOKEN = "8233188059:AAHRXRAZAY8DMc9huo0GSWKQ45yWSYQBfW0"  # Ваш токен
-    logger.warning("⚠️  Используется токен из кода. Добавьте в Secrets!")
-
-if not TOKEN:
-    logger.error("❌ Токен не найден!")
-    logger.info("💡 Добавьте переменную BOT_TOKEN в Secrets Replit")
+    # Логируем ошибку и завершаем работу, если токен не задан
     exit(1)
-
-logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
 
 # ==================== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ====================
 
@@ -1634,5 +1597,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
