@@ -978,6 +978,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.last_name or "",
             user.username or ""
         )
+
+                # Додати цей рядок:
+        log_user({
+            "user_id": user_id,
+            "first_name": user.first_name,
+            "last_name": user.last_name or "",
+            "username": user.username or ""
+        })
         
         # Очищаем сессию
         Database.clear_user_session(user_id)
@@ -1292,6 +1300,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.info(f"🛒 Товарів: {len(temp_data.get('items', []))}")
                         logger.info(f"🆔 User ID: {user_id}")
                         logger.info(f"{'='*80}\n")
+
+                        # Логуємо замовлення у файл
+                        temp_data["order_id"] = order_id
+                        log_order(temp_data)
                         
                         # Очищаем сессию
                         Database.clear_user_session(user_id)
@@ -1432,6 +1444,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Сохраняем сообщение
             Database.save_message(user_id, user_name, username, text, "повідомлення з меню")
+
+            # Логуємо повідомлення
+            log_message({
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "text": text,
+                "message_type": "повідомлення з меню"
+            })
             
             # Логируем
             logger.info(f"\n{'='*80}")
@@ -1566,6 +1587,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id, user_name, username, product_id, product["name"], 
                 0, formatted_phone, "call"
             )
+
+            log_quick_order({
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "phone": formatted_phone,
+                "product_name": product["name"],
+                "contact_method": "call"
+            })
             
             # Логируем
             logger.info(f"\n{'='*80}")
@@ -1599,6 +1630,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Сохраняем сообщение
             Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
+
+            # Логуємо повідомлення
+            log_message({
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "text": text,
+                "message_type": "повідомлення в чаті"
+            })
             
             # Отвечаем
             response = "✅ <b>Повідомлення отримано!</b>\n\n"
@@ -1707,4 +1747,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
