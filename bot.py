@@ -1177,7 +1177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "• Інші питання\n\n"
             response += "<i>Ми відповімо вам найближчим часом!</i>"
             
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id, response, parse_mode='HTML")
         
         elif data in ["call_us", "email_us", "our_address"]:
             if data == "call_us":
@@ -1636,4 +1636,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
