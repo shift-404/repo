@@ -572,6 +572,77 @@ COMPANY_INFO = {
     ]
 }
 
+# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+ORDERS_LOG = os.path.join(LOGS_DIR, "orders.txt")
+USERS_LOG = os.path.join(LOGS_DIR, "users.txt")
+MESSAGES_LOG = os.path.join(LOGS_DIR, "messages.txt")
+QUICK_ORDERS_LOG = os.path.join(LOGS_DIR, "quick_orders.txt")
+
+# ==================== ФУНКЦІЇ ЛОГУВАННЯ ====================
+
+def log_order(order_data: dict):
+    """Запис замовлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Місто: {order_data.get('city', 'Н/Д')}\n")
+            f.write(f"Відділення: {order_data.get('np_department', 'Н/Д')}\n")
+            f.write(f"Сума: {order_data.get('total', 0):.2f} грн\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception as e:
+        logger.error(f"Помилка запису замовлення: {e}")
+
+def log_user(user_data: dict):
+    """Запис користувача у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(USERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | ID:{user_data.get('user_id')} | {user_data.get('first_name', '')} {user_data.get('last_name', '')} | @{user_data.get('username', '')}\n")
+    except Exception as e:
+        logger.error(f"Помилка запису користувача: {e}")
+
+def log_message(msg_data: dict):
+    """Запис повідомлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'─'*50}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Від: {msg_data.get('user_name', 'Н/Д')} (ID: {msg_data.get('user_id', 'Н/Д')})\n")
+            f.write(f"Username: @{msg_data.get('username', 'Н/Д')}\n")
+            f.write(f"Тип: {msg_data.get('message_type', 'Н/Д')}\n")
+            f.write(f"Текст: {msg_data.get('text', 'Н/Д')}\n")
+            f.write(f"{'─'*50}\n")
+    except Exception as e:
+        logger.error(f"Помилка запису повідомлення: {e}")
+
+def log_quick_order(order_data: dict):
+    """Запис швидкого замовлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(QUICK_ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ШВИДКЕ ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception as e:
+        logger.error(f"Помилка запису швидкого замовлення: {e}")
+
 # ==================== ГЕНЕРАТОРИ КЛАВІАТУР ====================
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
@@ -1636,3 +1707,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
