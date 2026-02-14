@@ -5,7 +5,7 @@ import re
 import logging
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 # ← ВАЖНО! Импорты telegram ДОЛЖНЫ быть ПОСЛЕ базовых импортов
@@ -40,6 +40,83 @@ if not TOKEN:
     exit(1)
 
 logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
+
+# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+ORDERS_LOG = os.path.join(LOGS_DIR, "orders.txt")
+USERS_LOG = os.path.join(LOGS_DIR, "users.txt")
+MESSAGES_LOG = os.path.join(LOGS_DIR, "messages.txt")
+QUICK_ORDERS_LOG = os.path.join(LOGS_DIR, "quick_orders.txt")
+
+# ==================== ФУНКЦІЇ ЛОГУВАННЯ ====================
+
+def log_order(order_data: dict):
+    """Запис замовлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Місто: {order_data.get('city', 'Н/Д')}\n")
+            f.write(f"Відділення: {order_data.get('np_department', 'Н/Д')}\n")
+            f.write(f"Сума: {order_data.get('total', 0):.2f} грн\n")
+            f.write(f"Товари:\n")
+            for item in order_data.get('items', []):
+                f.write(f"  - {item.get('product_name')} x {item.get('quantity')} = {item.get('price', 0) * item.get('quantity', 0):.2f} грн\n")
+            f.write(f"Статус: {order_data.get('status', 'нове')}\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception as e:
+        logger.error(f"Помилка запису замовлення: {e}")
+
+def log_user(user_data: dict):
+    """Запис користувача у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(USERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | ID:{user_data.get('user_id')} | {user_data.get('first_name', '')} {user_data.get('last_name', '')} | @{user_data.get('username', '')}\n")
+    except Exception as e:
+        logger.error(f"Помилка запису користувача: {e}")
+
+def log_message(msg_data: dict):
+    """Запис повідомлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'─'*50}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Від: {msg_data.get('user_name', 'Н/Д')} (ID: {msg_data.get('user_id', 'Н/Д')})\n")
+            f.write(f"Username: @{msg_data.get('username', 'Н/Д')}\n")
+            f.write(f"Тип: {msg_data.get('message_type', 'Н/Д')}\n")
+            f.write(f"Текст: {msg_data.get('text', 'Н/Д')}\n")
+            f.write(f"{'─'*50}\n")
+    except Exception as e:
+        logger.error(f"Помилка запису повідомлення: {e}")
+
+def log_quick_order(order_data: dict):
+    """Запис швидкого замовлення у файл"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(QUICK_ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ШВИДКЕ ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
+            f.write(f"Спосіб зв'язку: {order_data.get('contact_method', 'Н/Д')}\n")
+            f.write(f"Статус: {order_data.get('status', 'нове')}\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception as e:
+        logger.error(f"Помилка запису швидкого замовлення: {e}")
 
 # ==================== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ====================
 
@@ -159,6 +236,69 @@ def init_database():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Таблица товарів (для адмін-панелі)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                category TEXT,
+                description TEXT,
+                unit TEXT DEFAULT 'банка',
+                image TEXT DEFAULT '🥫',
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица відгуків
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                user_name TEXT,
+                order_id INTEGER,
+                text TEXT,
+                rating INTEGER DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица адмінів (для сумісності)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Перевіряємо чи є товари, якщо ні - додаємо базові
+        cursor.execute("SELECT COUNT(*) FROM products")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Додаємо базові товари
+            products = [
+                (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
+                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+                 "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                
+                (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
+                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+                 "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                
+                (3, "Паштет з артишоку", 290, "паштети",
+                 "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
+                 "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+            ]
+            
+            cursor.executemany('''
+                INSERT INTO products (id, name, price, category, description, unit, image, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', products)
         
         conn.commit()
         conn.close()
@@ -307,7 +447,7 @@ class Database:
             items = []
             for row in rows:
                 cart_id, product_id, quantity = row
-                product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+                product = Database.get_product_by_id(product_id)
                 if product:
                     items.append({
                         "cart_id": cart_id,
@@ -361,8 +501,8 @@ class Database:
             cursor.execute('BEGIN TRANSACTION')
             
             cursor.execute('''
-                INSERT INTO orders (user_id, user_name, username, phone, city, np_department, total, order_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO orders (user_id, user_name, username, phone, city, np_department, total, order_type, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 order_data.get("user_id"),
                 order_data.get("user_name"),
@@ -371,7 +511,8 @@ class Database:
                 order_data.get("city"),
                 order_data.get("np_department"),
                 order_data.get("total"),
-                order_data.get("order_type")
+                order_data.get("order_type"),
+                "нове"
             ))
             
             order_id = cursor.lastrowid
@@ -430,9 +571,9 @@ class Database:
         try:
             cursor.execute('''
                 INSERT INTO quick_orders (user_id, user_name, username, product_id, product_name, 
-                                        quantity, phone, contact_method)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method))
+                                        quantity, phone, contact_method, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method, "нове"))
             
             order_id = cursor.lastrowid
             conn.commit()
@@ -441,6 +582,26 @@ class Database:
         except Exception as e:
             logger.error(f"❌ Ошибка сохранения быстрого заказа: {e}")
             return 0
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def save_review(user_id: int, user_name: str, order_id: int, text: str, rating: int = 5):
+        """Зберігає відгук"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO reviews (user_id, user_name, order_id, text, rating)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, user_name, order_id, text, rating))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка сохранения отзыва: {e}")
+            return False
         finally:
             conn.close()
     
@@ -466,68 +627,98 @@ class Database:
             cursor.execute('SELECT COUNT(*) FROM quick_orders')
             quick_orders = cursor.fetchone()[0]
             
+            cursor.execute('SELECT SUM(total) FROM orders')
+            total_revenue = cursor.fetchone()[0] or 0
+            
+            cursor.execute('SELECT COUNT(*) FROM reviews')
+            total_reviews = cursor.fetchone()[0]
+            
             return {
                 "total_orders": total_orders,
                 "total_messages": total_messages,
                 "total_users": total_users,
                 "active_carts": active_carts,
-                "quick_orders": quick_orders
+                "quick_orders": quick_orders,
+                "total_revenue": total_revenue,
+                "total_reviews": total_reviews
             }
         except Exception as e:
             logger.error(f"❌ Ошибка получения статистики: {e}")
             return {}
         finally:
             conn.close()
+    
+    @staticmethod
+    def get_all_products():
+        """Отримує всі товари з БД"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT * FROM products ORDER BY id')
+            rows = cursor.fetchall()
+            
+            products = []
+            for row in rows:
+                products.append({
+                    "id": row[0],
+                    "name": row[1],
+                    "price": row[2],
+                    "category": row[3],
+                    "description": row[4],
+                    "unit": row[5],
+                    "image": row[6],
+                    "details": row[7]
+                })
+            return products
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения товаров: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_product_by_id(product_id: int):
+        """Отримує товар за ID"""
+        products = Database.get_all_products()
+        for product in products:
+            if product["id"] == product_id:
+                return product
+        return None
+    
+    @staticmethod
+    def get_order_status(order_id: int) -> str:
+        """Отримує статус замовлення"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT status FROM orders WHERE order_id = ?', (order_id,))
+            row = cursor.fetchone()
+            return row[0] if row else "невідомо"
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения статуса: {e}")
+            return "невідомо"
+        finally:
+            conn.close()
 
-# ==================== ДАНІ ПРОДУКТІВ ====================
+# ==================== ДАНІ ПРОДУКТІВ (тепер з БД) ====================
 
-PRODUCTS = [
-    {
-        "id": 1,
-        "name": "Артишок маринований з зернами гірчиці",
-        "category": "мариновані артишоки",
-        "description": "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-        "price": 250,
-        "unit": "банка",
-        "image": "🥫",
-        "details": {
-            "volume": "Баночка 315 мл",
-            "weight": "Маса нетто 280 г",
-            "composition": "артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці",
-            "availability": "є в наявності"
-        }
-    },
-    {
-        "id": 2,
-        "name": "Артишок маринований з чилі",
-        "category": "мариновані артишоки",
-        "description": "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-        "price": 250,
-        "unit": "банка",
-        "image": "🌶️",
-        "details": {
-            "volume": "Баночка 315 мл",
-            "weight": "Маса нетто 280 г",
-            "composition": "артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі",
-            "availability": "є в наявності"
-        }
-    },
-    {
-        "id": 3,
-        "name": "Паштет з артишоку",
-        "category": "паштети",
-        "description": "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-        "price": 290,
-        "unit": "банка",
-        "image": "🍯",
-        "details": {
-            "volume": "Баночка 200 г",
-            "weight": "Маса нетто 200 г",
-            "composition": "артишок, вершки, олія оливкова, спеції",
-            "availability": "є в наявності"
-        }
-    }
-]
+def get_products_from_db():
+    """Отримує товари з БД для сумісності зі старим кодом"""
+    return Database.get_all_products()
+
+# Глобальна змінна для доступу до товарів
+PRODUCTS = get_products_from_db()
+
+# Оновлюємо PRODUCTS кожного разу при запуску
+def refresh_products():
+    global PRODUCTS
+    PRODUCTS = get_products_from_db()
+    logger.info(f"🔄 Оновлено товари: {len(PRODUCTS)} позицій")
+
+# Викликаємо при старті
+refresh_products()
 
 FAQS = [
     {
@@ -557,6 +748,10 @@ FAQS = [
     {
         "question": "Як оформити замовлення?",
         "answer": "🛒 Додайте товари в кошик → оформіть замовлення\n⚡ Або використайте швидке замовлення\n📞 Або зателефонуйте нам: +380932599103"
+    },
+    {
+        "question": "Як залишити відгук?",
+        "answer": "⭐ Ви можете залишити відгук про наші продукти просто написавши його в чат після отримання замовлення. Ми будемо дуже вдячні!"
     }
 ]
 
@@ -571,77 +766,6 @@ COMPANY_INFO = {
         "🚚 Доставка: Новою Поштою по всій Україні"
     ]
 }
-
-# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGS_DIR = os.path.join(BASE_DIR, "logs")
-os.makedirs(LOGS_DIR, exist_ok=True)
-
-ORDERS_LOG = os.path.join(LOGS_DIR, "orders.txt")
-USERS_LOG = os.path.join(LOGS_DIR, "users.txt")
-MESSAGES_LOG = os.path.join(LOGS_DIR, "messages.txt")
-QUICK_ORDERS_LOG = os.path.join(LOGS_DIR, "quick_orders.txt")
-
-# ==================== ФУНКЦІЇ ЛОГУВАННЯ ====================
-
-def log_order(order_data: dict):
-    """Запис замовлення у файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(ORDERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
-            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
-            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
-            f.write(f"Місто: {order_data.get('city', 'Н/Д')}\n")
-            f.write(f"Відділення: {order_data.get('np_department', 'Н/Д')}\n")
-            f.write(f"Сума: {order_data.get('total', 0):.2f} грн\n")
-            f.write(f"{'='*60}\n\n")
-    except Exception as e:
-        logger.error(f"Помилка запису замовлення: {e}")
-
-def log_user(user_data: dict):
-    """Запис користувача у файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(USERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{timestamp} | ID:{user_data.get('user_id')} | {user_data.get('first_name', '')} {user_data.get('last_name', '')} | @{user_data.get('username', '')}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису користувача: {e}")
-
-def log_message(msg_data: dict):
-    """Запис повідомлення у файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'─'*50}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Від: {msg_data.get('user_name', 'Н/Д')} (ID: {msg_data.get('user_id', 'Н/Д')})\n")
-            f.write(f"Username: @{msg_data.get('username', 'Н/Д')}\n")
-            f.write(f"Тип: {msg_data.get('message_type', 'Н/Д')}\n")
-            f.write(f"Текст: {msg_data.get('text', 'Н/Д')}\n")
-            f.write(f"{'─'*50}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису повідомлення: {e}")
-
-def log_quick_order(order_data: dict):
-    """Запис швидкого замовлення у файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(QUICK_ORDERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"ШВИДКЕ ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
-            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
-            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
-            f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
-            f.write(f"{'='*60}\n\n")
-    except Exception as e:
-        logger.error(f"Помилка запису швидкого замовлення: {e}")
 
 # ==================== ГЕНЕРАТОРИ КЛАВІАТУР ====================
 
@@ -670,7 +794,7 @@ def get_main_menu() -> InlineKeyboardMarkup:
         [{"text": "❓ Часті запитання", "callback_data": "faq"}],
         [
             {"text": "🛒 Моя корзина", "callback_data": "cart"}, 
-            {"text": "📋 Мої замовлення", "callback_data": "my_orders"}
+            {"text": "⭐ Мій відгук", "callback_data": "my_review"}
         ],
         [{"text": "📞 Зв'язатися з нами", "callback_data": "contact"}]
     ]
@@ -683,6 +807,7 @@ def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
 
 def get_products_menu() -> InlineKeyboardMarkup:
     """Меню продуктів"""
+    refresh_products()  # Оновлюємо товари перед показом
     buttons = []
     
     for product in PRODUCTS:
@@ -732,6 +857,7 @@ def get_contact_menu() -> InlineKeyboardMarkup:
         [{"text": "📧 Написати email", "callback_data": "email_us"}],
         [{"text": "📍 Наша адреса", "callback_data": "our_address"}],
         [{"text": "💬 Написати нам тут", "callback_data": "write_here"}],
+        [{"text": "⭐ Залишити відгук", "callback_data": "leave_review"}],
         [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
     ]
     return create_inline_keyboard(buttons)
@@ -762,6 +888,18 @@ def get_order_confirmation_keyboard() -> InlineKeyboardMarkup:
     buttons = [
         [{"text": "✅ Так, продовжити", "callback_data": "confirm_order_yes"}],
         [{"text": "❌ Ні, скасувати", "callback_data": "confirm_order_no"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_review_keyboard() -> InlineKeyboardMarkup:
+    """Клавіатура для відгуку"""
+    buttons = [
+        [{"text": "⭐ 5 зірок", "callback_data": "review_5"}],
+        [{"text": "⭐ 4 зірки", "callback_data": "review_4"}],
+        [{"text": "⭐ 3 зірки", "callback_data": "review_3"}],
+        [{"text": "⭐ 2 зірки", "callback_data": "review_2"}],
+        [{"text": "⭐ 1 зірка", "callback_data": "review_1"}],
+        [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
     ]
     return create_inline_keyboard(buttons)
 
@@ -852,6 +990,7 @@ def get_company_text() -> str:
 
 def get_product_text(product_id: int) -> str:
     """Текст продукту"""
+    refresh_products()  # Оновлюємо товари
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
     if not product:
         return "❌ Продукт не знайдено"
@@ -863,14 +1002,10 @@ def get_product_text(product_id: int) -> str:
 
 💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
 🏷️ <b>Категорія:</b> {product['category']}
-📦 <b>Наявність:</b> {product['details']['availability']}
+📦 <b>Наявність:</b> Є в наявності
 
 <b>📊 Характеристики:</b>
-• {product['details']['volume']}
-• {product['details']['weight']}
-
-<b>🍽️ Склад:</b>
-{product['details']['composition']}
+• {product['details']}
 
 <b>🌟 Переваги:</b>
 • Вирощений на Одещині
@@ -884,6 +1019,7 @@ def get_product_text(product_id: int) -> str:
 
 def get_quick_order_text(product_id: int) -> str:
     """Текст швидкого замовлення"""
+    refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
     if not product:
         return "❌ Продукт не знайдено"
@@ -924,6 +1060,8 @@ def get_contact_text() -> str:
 • <b>Адреса</b> - для самовивозу
 • <b>Написати тут</b> - швидке повідомлення в чаті
 
+<b>⭐ Залишити відгук</b> - поділіться враженнями про наші продукти
+
 <i>Просто напишіть нам повідомлення в цьому чаті 👇</i>
     """
 
@@ -960,6 +1098,23 @@ def get_cart_text(cart_items: List[Dict]) -> str:
     
     return text
 
+def get_review_text() -> str:
+    """Текст для відгуку"""
+    return """
+⭐ <b>Залишити відгук</b>
+
+Ми будемо дуже вдячні, якщо ви поділитесь своїми враженнями про наші продукти!
+
+<b>Оберіть оцінку:</b>
+• 5 ⭐ - Чудово
+• 4 ⭐ - Добре
+• 3 ⭐ - Нормально
+• 2 ⭐ - Погано
+• 1 ⭐ - Жахливо
+
+Після вибору оцінки напишіть ваш відгук текстом.
+    """
+
 # ==================== TELEGRAM HANDLERS ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -978,8 +1133,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user.last_name or "",
             user.username or ""
         )
-
-                # Додати цей рядок:
+        
+        # Логуємо користувача
         log_user({
             "user_id": user_id,
             "first_name": user.first_name,
@@ -1089,6 +1244,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("add_to_cart_"):
             product_id = int(data.split("_")[3])
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             
             if not product:
@@ -1109,6 +1265,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("quick_order_"):
             product_id = int(data.split("_")[2])
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             
             if not product:
@@ -1121,6 +1278,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("quick_call_"):
             product_id = int(data.split("_")[2])
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             
             if not product:
@@ -1142,6 +1300,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             
             if not product:
@@ -1161,7 +1320,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Логируем в консоль
             user_session = Database.get_user_session(user_id)
-            user_name = f"User_{user_id}"
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
             
             logger.info(f"\n{'='*80}")
             logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ (ЧАТ):")
@@ -1232,13 +1391,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
         
-        elif data == "my_orders":
-            text = "📋 <b>Мої замовлення</b>\n\n"
-            text += "Функція перегляду замовлень знаходиться в розробці.\n"
-            text += "<i>Зв'яжіться з нами для отримання інформації про ваші замовлення.</i>"
+        elif data == "my_review":
+            review_text = get_review_text()
+            await query.edit_message_text(review_text, reply_markup=get_review_keyboard(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="review")
+        
+        elif data.startswith("review_"):
+            if data == "review_5":
+                rating = 5
+            elif data == "review_4":
+                rating = 4
+            elif data == "review_3":
+                rating = 3
+            elif data == "review_2":
+                rating = 2
+            elif data == "review_1":
+                rating = 1
+            else:
+                rating = 5
             
-            await query.edit_message_text(text, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="my_orders")
+            Database.save_user_session(user_id, f"waiting_review_text", {"rating": rating})
+            
+            await query.edit_message_text(
+                f"⭐ <b>Ваша оцінка: {rating} зірок</b>\n\n"
+                f"Напишіть текст вашого відгуку:",
+                parse_mode='HTML'
+            )
+        
+        elif data == "leave_review":
+            review_text = get_review_text()
+            await query.edit_message_text(review_text, reply_markup=get_review_keyboard(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="review")
         
         elif data == "contact":
             contact_text = get_contact_text()
@@ -1300,9 +1483,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.info(f"🛒 Товарів: {len(temp_data.get('items', []))}")
                         logger.info(f"🆔 User ID: {user_id}")
                         logger.info(f"{'='*80}\n")
-
+                        
                         # Логуємо замовлення у файл
                         temp_data["order_id"] = order_id
+                        temp_data["status"] = "нове"
                         log_order(temp_data)
                         
                         # Очищаем сессию
@@ -1317,7 +1501,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text += f"🏣 Відділення Нової Пошти: <b>{temp_data.get('np_department', '')}</b>\n"
                         text += f"💰 Сума: <b>{temp_data.get('total', 0):.2f} грн</b>\n\n"
                         text += "📞 <b>Ми зв'яжемось з вами для підтвердження!</b>\n\n"
-                        text += "<i>Дякуємо за замовлення! 🌱</i>"
+                        text += "<i>Дякуємо за замовлення! 🌱</i>\n\n"
+                        text += "⭐ Після отримання замовлення ви зможете залишити відгук у меню 'Мій відгук'"
                     else:
                         text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
                         text += "Будь ласка, спробуйте ще раз або зв'яжіться з нами.\n\n"
@@ -1363,7 +1548,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = user.id
         text = update.message.text.strip()
         
-        logger.info(f"👤 [{datetime.now().strftime('%H:%M:%S')}] {user.first_name or 'Користувач'}: {text}")
+        logger.info(f"👤 [{datetime.now().strftime('%H:%M:%S')}] {user.first_name or 'Користувач'}: {text[:50]}...")
         
         # Сохраняем пользователя
         Database.save_user(
@@ -1394,6 +1579,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обработка состояний
         if state == "waiting_quantity":
             product_id = temp_data.get("product_id")
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             
             if not product:
@@ -1444,7 +1630,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Сохраняем сообщение
             Database.save_message(user_id, user_name, username, text, "повідомлення з меню")
-
+            
             # Логуємо повідомлення
             log_message({
                 "user_id": user_id,
@@ -1562,6 +1748,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone = text.strip()
             product_id = temp_data.get("product_id")
             
+            refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
             if not product:
                 await update.message.reply_text("❌ Помилка: продукт не знайдено", reply_markup=get_main_menu())
@@ -1587,7 +1774,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id, user_name, username, product_id, product["name"], 
                 0, formatted_phone, "call"
             )
-
+            
+            # Логуємо швидке замовлення
             log_quick_order({
                 "order_id": order_id,
                 "user_id": user_id,
@@ -1595,7 +1783,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "username": username,
                 "phone": formatted_phone,
                 "product_name": product["name"],
-                "contact_method": "call"
+                "contact_method": "call",
+                "status": "нове"
             })
             
             # Логируем
@@ -1623,6 +1812,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
         
+        elif state == "waiting_review_text":
+            rating = temp_data.get("rating", 5)
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            
+            # Зберігаємо відгук
+            if Database.save_review(user_id, user_name, 0, text, rating):
+                response = f"✅ <b>Дякуємо за ваш відгук!</b>\n\n"
+                response += f"⭐ Ваша оцінка: {rating}/5\n\n"
+                response += f"Ваш відгук: \"{text}\"\n\n"
+                response += "<i>Ми цінуємо вашу думку!</i>"
+                
+                # Логуємо відгук
+                logger.info(f"\n{'='*80}")
+                logger.info(f"⭐ НОВИЙ ВІДГУК:")
+                logger.info(f"👤 Клієнт: {user_name}")
+                logger.info(f"⭐ Оцінка: {rating}/5")
+                logger.info(f"💬 Текст: {text}")
+                logger.info(f"{'='*80}\n")
+            else:
+                response = "❌ <b>Помилка при збереженні відгуку</b>\n\nСпробуйте пізніше."
+            
+            Database.clear_user_session(user_id)
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
+        
         else:
             # Обычное сообщение
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
@@ -1630,7 +1844,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Сохраняем сообщение
             Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
-
+            
             # Логуємо повідомлення
             log_message({
                 "user_id": user_id,
@@ -1694,6 +1908,9 @@ def main():
             logger.error("❌ Не удалось инициализировать базу данных")
             return
         
+        # Оновлюємо товари
+        refresh_products()
+        
         # Логируем статистику
         stats = Database.get_statistics()
         logger.info("=" * 80)
@@ -1707,6 +1924,8 @@ def main():
         logger.info(f"• Швидких замовлень: {stats.get('quick_orders', 0)}")
         logger.info(f"• Активних кошиків: {stats.get('active_carts', 0)}")
         logger.info(f"• Продуктів у базі: {len(PRODUCTS)}")
+        logger.info(f"• Виручка: {stats.get('total_revenue', 0):.2f} грн")
+        logger.info(f"• Відгуків: {stats.get('total_reviews', 0)}")
         logger.info("=" * 80)
         logger.info("🔄 Очікування повідомлень...\n")
         
@@ -1731,9 +1950,9 @@ def main():
             poll_interval=2.0,              # Интервал опроса
             timeout=30,                     # Таймаут запроса
             read_timeout=30,                # Таймаут чтения
-            connect_timeout=30,             # Таймаут подключения
-            pool_timeout=30,                # Таймаут пула
-            close_loop=False                # Не закрывать event loop
+            connect_timeout=30,              # Таймаут подключения
+            pool_timeout=30,                  # Таймаут пула
+            close_loop=False                  # Не закрывать event loop
         )
         
     except Exception as e:
@@ -1747,5 +1966,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
