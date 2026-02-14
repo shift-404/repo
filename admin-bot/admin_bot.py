@@ -4,9 +4,10 @@ import sqlite3
 import logging
 import sys
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from io import StringIO, BytesIO
+import asyncio
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -46,82 +47,9 @@ REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 # Створюємо папку для звітів, якщо її немає
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# ==================== ФАЙЛИ ДЛЯ ЛОГУВАННЯ ====================
-
-ORDERS_LOG = os.path.join(REPORTS_DIR, "orders.txt")
-USERS_LOG = os.path.join(REPORTS_DIR, "users.txt")
-MESSAGES_LOG = os.path.join(REPORTS_DIR, "messages.txt")
-QUICK_ORDERS_LOG = os.path.join(REPORTS_DIR, "quick_orders.txt")
-
 # ==================== СЕСІЇ АДМІНІВ ====================
 
 admin_sessions = {}
-
-# ==================== ФУНКЦІЇ ЛОГУВАННЯ ====================
-
-def log_order(order_data: dict):
-    """Записує замовлення у текстовий файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(ORDERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*80}\n")
-            f.write(f"ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
-            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
-            f.write(f"Username: {order_data.get('username', 'Н/Д')}\n")
-            f.write(f"User ID: {order_data.get('user_id', 'Н/Д')}\n")
-            f.write(f"Місто: {order_data.get('city', 'Н/Д')}\n")
-            f.write(f"Відділення НП: {order_data.get('np_department', 'Н/Д')}\n")
-            f.write(f"Сума: {order_data.get('total', 0):.2f} грн\n")
-            f.write(f"Товари:\n")
-            for item in order_data.get('items', []):
-                f.write(f"  - {item.get('product_name')} x {item.get('quantity')} = {item.get('price') * item.get('quantity'):.2f} грн\n")
-            f.write(f"{'='*80}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису замовлення: {e}")
-
-def log_user(user_data: dict):
-    """Записує користувача у текстовий файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(USERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{timestamp} | ID:{user_data.get('user_id')} | {user_data.get('first_name')} {user_data.get('last_name')} | @{user_data.get('username')}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису користувача: {e}")
-
-def log_message(message_data: dict):
-    """Записує повідомлення у текстовий файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'─'*60}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Від: {message_data.get('user_name')} (ID: {message_data.get('user_id')})\n")
-            f.write(f"Username: @{message_data.get('username')}\n")
-            f.write(f"Тип: {message_data.get('message_type')}\n")
-            f.write(f"Текст: {message_data.get('text')}\n")
-            f.write(f"{'─'*60}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису повідомлення: {e}")
-
-def log_quick_order(order_data: dict):
-    """Записує швидке замовлення у текстовий файл"""
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(QUICK_ORDERS_LOG, "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*80}\n")
-            f.write(f"ШВИДКЕ ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
-            f.write(f"Час: {timestamp}\n")
-            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
-            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
-            f.write(f"Username: {order_data.get('username', 'Н/Д')}\n")
-            f.write(f"User ID: {order_data.get('user_id', 'Н/Д')}\n")
-            f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
-            f.write(f"Спосіб зв'язку: {order_data.get('contact_method', 'Н/Д')}\n")
-            f.write(f"{'='*80}\n")
-    except Exception as e:
-        logger.error(f"Помилка запису швидкого замовлення: {e}")
 
 # ==================== ФУНКЦІЇ ДЛЯ РОБОТИ З БД ====================
 
@@ -134,6 +62,8 @@ def get_db_connection():
     except Exception as e:
         logger.error(f"Помилка підключення до БД: {e}")
         return None
+
+# ==================== ФУНКЦІЇ ДЛЯ ЗАМОВЛЕНЬ ====================
 
 def get_all_orders():
     """Отримати всі замовлення з БД"""
@@ -166,6 +96,39 @@ def get_all_orders():
         return orders
     except Exception as e:
         logger.error(f"Помилка отримання замовлень: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_orders_by_phone(phone: str):
+    """Отримати замовлення за номером телефону"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM orders 
+            WHERE phone LIKE ? 
+            ORDER BY created_at DESC
+        ''', (f"%{phone}%",))
+        rows = cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            order = dict(row)
+            cursor.execute('''
+                SELECT * FROM order_items 
+                WHERE order_id = ?
+            ''', (order['order_id'],))
+            items = cursor.fetchall()
+            order['items'] = [dict(item) for item in items]
+            orders.append(order)
+        
+        return orders
+    except Exception as e:
+        logger.error(f"Помилка отримання замовлень за телефоном: {e}")
         return []
     finally:
         conn.close()
@@ -209,6 +172,27 @@ def get_quick_orders():
     finally:
         conn.close()
 
+def update_order_status(order_id: int, status: str):
+    """Оновити статус замовлення"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE orders SET status = ? WHERE order_id = ?
+        ''', (status, order_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Помилка оновлення статусу: {e}")
+        return False
+    finally:
+        conn.close()
+
+# ==================== ФУНКЦІЇ ДЛЯ КЛІЄНТІВ ====================
+
 def get_all_users():
     """Отримати всіх користувачів"""
     conn = get_db_connection()
@@ -228,8 +212,53 @@ def get_all_users():
     finally:
         conn.close()
 
-def get_all_products():
-    """Отримати всі товари"""
+def get_user_by_phone(phone: str):
+    """Отримати користувача за номером телефону"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        # Спочатку шукаємо в замовленнях
+        cursor.execute('''
+            SELECT DISTINCT user_id, user_name, username FROM orders 
+            WHERE phone LIKE ? 
+            ORDER BY created_at DESC LIMIT 1
+        ''', (f"%{phone}%",))
+        order_user = cursor.fetchone()
+        
+        if order_user:
+            user_id = order_user[0]
+            cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+            return dict(cursor.fetchone())
+        
+        return None
+    except Exception as e:
+        logger.error(f"Помилка отримання користувача за телефоном: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_user_by_id(user_id: int):
+    """Отримати користувача за ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Помилка отримання користувача: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_user_orders(user_id: int):
+    """Отримати всі замовлення користувача"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -237,96 +266,146 @@ def get_all_products():
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT * FROM products 
-            ORDER BY id
-        ''')
+            SELECT * FROM orders 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        rows = cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            order = dict(row)
+            cursor.execute('''
+                SELECT * FROM order_items 
+                WHERE order_id = ?
+            ''', (order['order_id'],))
+            items = cursor.fetchall()
+            order['items'] = [dict(item) for item in items]
+            orders.append(order)
+        
+        return orders
+    except Exception as e:
+        logger.error(f"Помилка отримання замовлень користувача: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_user_messages(user_id: int):
+    """Отримати повідомлення користувача"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM messages 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC LIMIT 10
+        ''', (user_id,))
         return [dict(row) for row in cursor.fetchall()]
     except Exception as e:
-        logger.error(f"Помилка отримання товарів: {e}")
+        logger.error(f"Помилка отримання повідомлень: {e}")
         return []
     finally:
         conn.close()
 
-def update_product(product_id: int, **kwargs):
-    """Оновити товар"""
+def get_user_quick_orders(user_id: int):
+    """Отримати швидкі замовлення користувача"""
     conn = get_db_connection()
     if not conn:
-        return False
+        return []
     
     try:
         cursor = conn.cursor()
-        fields = []
-        values = []
-        for key, value in kwargs.items():
-            fields.append(f"{key} = ?")
-            values.append(value)
+        cursor.execute('''
+            SELECT * FROM quick_orders 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Помилка отримання швидких замовлень: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_customer_segment(user_data: dict, orders: list) -> str:
+    """Визначення сегменту клієнта"""
+    if not orders:
+        return "🆕 Новий клієнт (без замовлень)"
+    
+    total_orders = len(orders)
+    total_spent = sum(order['total'] for order in orders)
+    last_order = max(orders, key=lambda x: x['created_at'])
+    last_order_date = datetime.strptime(last_order['created_at'][:19], '%Y-%m-%d %H:%M:%S')
+    days_since_last = (datetime.now() - last_order_date).days
+    
+    if total_orders >= 5 and total_spent >= 5000:
+        return "👑 VIP клієнт"
+    elif total_orders >= 3:
+        return "⭐ Постійний клієнт"
+    elif days_since_last > 90:
+        return "💤 Неактивний клієнт"
+    elif total_orders == 1:
+        return "🆕 Новий клієнт (1 замовлення)"
+    else:
+        return "📊 Активний клієнт"
+
+# ==================== ФУНКЦІЇ ДЛЯ РОЗСИЛОК ====================
+
+async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment: str, message: str):
+    """Відправка розсилки по сегменту клієнтів"""
+    users = get_all_users()
+    sent_count = 0
+    fail_count = 0
+    
+    for user in users:
+        user_orders = get_user_orders(user['user_id'])
+        user_segment = get_customer_segment(user, user_orders)
         
-        values.append(product_id)
-        query = f"UPDATE products SET {', '.join(fields)} WHERE id = ?"
-        cursor.execute(query, values)
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка оновлення товару: {e}")
-        return False
-    finally:
-        conn.close()
+        if segment == "all" or segment in user_segment:
+            try:
+                await context.bot.send_message(
+                    chat_id=user['user_id'],
+                    text=f"📢 <b>Оголошення</b>\n\n{message}",
+                    parse_mode='HTML'
+                )
+                sent_count += 1
+                await asyncio.sleep(0.05)  # Щоб уникнути лімітів Telegram
+            except Exception as e:
+                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
+                fail_count += 1
+    
+    return sent_count, fail_count
 
-def delete_product(product_id: int):
-    """Видалити товар"""
-    conn = get_db_connection()
-    if not conn:
-        return False
+# ==================== ФУНКЦІЇ ДЛЯ ВІДГУКІВ ====================
+
+async def send_review_request(context: ContextTypes.DEFAULT_TYPE, user_id: int, order_id: int = None):
+    """Відправка запиту на відгук"""
+    text = "⭐ <b>Ваша думка важлива для нас!</b>\n\n"
+    text += "Будемо вдячні, якщо ви залишите відгук про наші продукти:\n\n"
+    text += "• Якість товару\n"
+    text += "• Швидкість доставки\n"
+    text += "• Обслуговування\n\n"
+    text += "Напишіть ваш відгук прямо в цьому чаті, і ми опублікуємо його на наших сторінках!\n\n"
+    text += "<i>Дякуємо, що обираєте Бонелет! 🌱</i>"
+    
+    if order_id:
+        text = f"📦 <b>Замовлення #{order_id}</b>\n\n" + text
     
     try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM products WHERE id = ?", (product_id,))
-        conn.commit()
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=text,
+            parse_mode='HTML'
+        )
         return True
     except Exception as e:
-        logger.error(f"Помилка видалення товару: {e}")
+        logger.error(f"Помилка відправки запиту на відгук: {e}")
         return False
-    finally:
-        conn.close()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
-    """Додати новий товар"""
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, details)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (name, price, category, description, unit, image, details))
-        conn.commit()
-        return cursor.lastrowid
-    except Exception as e:
-        logger.error(f"Помилка додавання товару: {e}")
-        return False
-    finally:
-        conn.close()
-
-def update_order_status(order_id: int, status: str):
-    """Оновити статус замовлення"""
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE orders SET status = ? WHERE order_id = ?
-        ''', (status, order_id))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка оновлення статусу: {e}")
-        return False
-    finally:
-        conn.close()
+# ==================== ФУНКЦІЇ ДЛЯ СТАТИСТИКИ ====================
 
 def get_statistics():
     """Отримати статистику"""
@@ -354,9 +433,43 @@ def get_statistics():
         cursor.execute("SELECT SUM(total) FROM orders")
         total_revenue = cursor.fetchone()[0] or 0
         
+        # Середній чек
+        avg_check = total_revenue / total_orders if total_orders > 0 else 0
+        
         # Замовлення за статусами
         cursor.execute("SELECT status, COUNT(*) FROM orders GROUP BY status")
         orders_by_status = dict(cursor.fetchall())
+        
+        # Замовлення за останні 30 днів
+        cursor.execute('''
+            SELECT COUNT(*), SUM(total) FROM orders 
+            WHERE created_at >= datetime('now', '-30 days')
+        ''')
+        last_30_days = cursor.fetchone()
+        
+        # Сегментація клієнтів
+        users = get_all_users()
+        segments = {
+            "vip": 0,
+            "regular": 0,
+            "new": 0,
+            "inactive": 0,
+            "active": 0
+        }
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            if "VIP" in segment:
+                segments["vip"] += 1
+            elif "Постійний" in segment:
+                segments["regular"] += 1
+            elif "Неактивний" in segment:
+                segments["inactive"] += 1
+            elif "Новий" in segment:
+                segments["new"] += 1
+            else:
+                segments["active"] += 1
         
         return {
             "total_orders": total_orders,
@@ -364,7 +477,11 @@ def get_statistics():
             "total_quick_orders": total_quick_orders,
             "total_messages": total_messages,
             "total_revenue": total_revenue,
-            "orders_by_status": orders_by_status
+            "avg_check": avg_check,
+            "orders_by_status": orders_by_status,
+            "last_30_days_orders": last_30_days[0] or 0,
+            "last_30_days_revenue": last_30_days[1] or 0,
+            "segments": segments
         }
     except Exception as e:
         logger.error(f"Помилка отримання статистики: {e}")
@@ -372,12 +489,185 @@ def get_statistics():
     finally:
         conn.close()
 
+# ==================== ФУНКЦІЇ ДЛЯ ТОВАРІВ ====================
+
+def get_all_products():
+    """Отримати всі товари з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM products ORDER BY id')
+        rows = cursor.fetchall()
+        
+        products = []
+        for row in rows:
+            products.append({
+                "id": row[0],
+                "name": row[1],
+                "price": row[2],
+                "category": row[3],
+                "description": row[4],
+                "unit": row[5],
+                "image": row[6],
+                "details": row[7]
+            })
+        return products
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения товаров: {e}")
+        return []
+    finally:
+        conn.close()
+
+def update_product(product_id: int, **kwargs):
+    """Оновлює товар"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        fields = []
+        values = []
+        for key, value in kwargs.items():
+            fields.append(f"{key} = ?")
+            values.append(value)
+        
+        values.append(product_id)
+        query = f"UPDATE products SET {', '.join(fields)} WHERE id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка обновления товара: {e}")
+        return False
+    finally:
+        conn.close()
+
+def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
+    """Додає новий товар"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO products (name, price, category, description, unit, image, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (name, price, category, description, unit, image, details))
+        conn.commit()
+        return cursor.lastrowid
+    except Exception as e:
+        logger.error(f"❌ Ошибка добавления товара: {e}")
+        return None
+    finally:
+        conn.close()
+
+def delete_product(product_id: int):
+    """Видаляє товар"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM products WHERE id = ?', (product_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления товара: {e}")
+        return False
+    finally:
+        conn.close()
+
+# ==================== ФУНКЦІЇ ДЛЯ АДМІНІВ ====================
+
+def get_all_admins():
+    """Отримує список адмінів"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id, username, added_by, added_at FROM admins')
+        rows = cursor.fetchall()
+        admins = []
+        for row in rows:
+            admins.append({
+                "user_id": row[0],
+                "username": row[1],
+                "added_by": row[2],
+                "added_at": row[3]
+            })
+        return admins
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения админов: {e}")
+        return []
+    finally:
+        conn.close()
+
+def add_admin(user_id: int, username: str = "", added_by: int = 0):
+    """Додає нового адміна"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO admins (user_id, username, added_by)
+            VALUES (?, ?, ?)
+        ''', (user_id, username, added_by))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка добавления админа: {e}")
+        return False
+    finally:
+        conn.close()
+
+def remove_admin(user_id: int):
+    """Видаляє адміна"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM admins WHERE user_id = ?', (user_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления админа: {e}")
+        return False
+    finally:
+        conn.close()
+
+def is_admin(user_id: int) -> bool:
+    """Перевіряє чи є користувач адміном"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = ?', (user_id,))
+        count = cursor.fetchone()[0]
+        return count > 0
+    except Exception as e:
+        logger.error(f"❌ Ошибка проверки админа: {e}")
+        return False
+    finally:
+        conn.close()
+
 # ==================== ФУНКЦІЇ ГЕНЕРАЦІЇ ЗВІТІВ ====================
 
-def generate_orders_report(format: str = "txt"):
+def generate_orders_report(orders: list, format: str = "txt"):
     """Згенерувати звіт по замовленнях"""
-    orders = get_all_orders()
-    
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ЗАМОВЛЕННЯХ\n")
@@ -396,9 +686,6 @@ def generate_orders_report(format: str = "txt"):
             output.write(f"Відділення: {order['np_department']}\n")
             output.write(f"Сума: {order['total']:.2f} грн\n")
             output.write(f"Статус: {order['status']}\n")
-            output.write(f"Товари:\n")
-            for item in order.get('items', []):
-                output.write(f"  - {item['product_name']} x {item['quantity']} = {item['price_per_unit'] * item['quantity']:.2f} грн\n")
             output.write("-" * 40 + "\n")
         
         return output.getvalue().encode('utf-8')
@@ -406,10 +693,9 @@ def generate_orders_report(format: str = "txt"):
     elif format == "csv":
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Місто', 'Відділення', 'Сума', 'Статус', 'Товари'])
+        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Місто', 'Відділення', 'Сума', 'Статус'])
         
         for order in orders:
-            items_str = "; ".join([f"{item['product_name']} x{item['quantity']}" for item in order.get('items', [])])
             writer.writerow([
                 order['order_id'],
                 order['created_at'],
@@ -419,88 +705,6 @@ def generate_orders_report(format: str = "txt"):
                 order['city'],
                 order['np_department'],
                 f"{order['total']:.2f}",
-                order['status'],
-                items_str
-            ])
-        
-        return output.getvalue().encode('utf-8-sig')
-
-def generate_users_report(format: str = "txt"):
-    """Згенерувати звіт по користувачах"""
-    users = get_all_users()
-    
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО КОРИСТУВАЧАХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього користувачів: {len(users)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for user in users:
-            output.write(f"ID: {user['user_id']}\n")
-            output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
-            output.write(f"Username: @{user['username']}\n")
-            output.write(f"Дата реєстрації: {user['created_at']}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
-    
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['User ID', 'Імя', 'Прізвище', 'Username', 'Дата реєстрації'])
-        
-        for user in users:
-            writer.writerow([
-                user['user_id'],
-                user['first_name'],
-                user['last_name'],
-                user['username'],
-                user['created_at']
-            ])
-        
-        return output.getvalue().encode('utf-8-sig')
-
-def generate_quick_orders_report(format: str = "txt"):
-    """Згенерувати звіт по швидких замовленнях"""
-    orders = get_quick_orders()
-    
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО ШВИДКИХ ЗАМОВЛЕННЯХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього замовлень: {len(orders)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for order in orders:
-            output.write(f"Номер: {order['id']}\n")
-            output.write(f"Дата: {order['created_at']}\n")
-            output.write(f"Клієнт: {order['user_name']}\n")
-            output.write(f"Телефон: {order['phone']}\n")
-            output.write(f"Username: @{order['username']}\n")
-            output.write(f"Продукт: {order['product_name']}\n")
-            output.write(f"Спосіб зв'язку: {order['contact_method']}\n")
-            output.write(f"Статус: {order['status']}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
-    
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Продукт', 'Спосіб зв`язку', 'Статус'])
-        
-        for order in orders:
-            writer.writerow([
-                order['id'],
-                order['created_at'],
-                order['user_name'],
-                order['phone'],
-                order['username'],
-                order['product_name'],
-                order['contact_method'],
                 order['status']
             ])
         
@@ -508,71 +712,139 @@ def generate_quick_orders_report(format: str = "txt"):
 
 # ==================== ФУНКЦІЇ КЛАВІАТУР ====================
 
+def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
+    """Створює inline клавіатуру"""
+    keyboard = []
+    for row in buttons:
+        keyboard_row = []
+        for button in row:
+            keyboard_row.append(
+                InlineKeyboardButton(
+                    text=button.get("text", ""),
+                    callback_data=button.get("callback_data", "")
+                )
+            )
+        keyboard.append(keyboard_row)
+    return InlineKeyboardMarkup(keyboard)
+
 def get_main_menu():
     """Головне меню адмін-панелі"""
     keyboard = [
-        [InlineKeyboardButton("📦 Товари", callback_data="admin_products")],
-        [InlineKeyboardButton("📋 Замовлення", callback_data="admin_orders")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("👥 Користувачі", callback_data="admin_users")],
-        [InlineKeyboardButton("📁 Звіти", callback_data="admin_reports")],
-        [InlineKeyboardButton("⚙️ Налаштування", callback_data="admin_settings")],
-        [InlineKeyboardButton("🔐 Вийти", callback_data="admin_logout")]
+        [{"text": "📦 Товари", "callback_data": "admin_products"}],
+        [{"text": "📋 Замовлення", "callback_data": "admin_orders"}],
+        [{"text": "👥 Клієнти", "callback_data": "admin_customers"}],
+        [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
+        [{"text": "📁 Звіти", "callback_data": "admin_reports"}],
+        [{"text": "📢 Розсилки", "callback_data": "admin_broadcast"}],
+        [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
+        [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
+        [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
 
 def get_products_menu():
     """Меню керування товарами"""
     keyboard = [
-        [InlineKeyboardButton("📋 Список товарів", callback_data="admin_product_list")],
-        [InlineKeyboardButton("➕ Додати товар", callback_data="admin_product_add")],
-        [InlineKeyboardButton("✏️ Редагувати товар", callback_data="admin_product_edit")],
-        [InlineKeyboardButton("🗑 Видалити товар", callback_data="admin_product_delete")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]
+        [{"text": "📋 Список товарів", "callback_data": "admin_product_list"}],
+        [{"text": "➕ Додати товар", "callback_data": "admin_product_add"}],
+        [{"text": "✏️ Редагувати товар", "callback_data": "admin_product_edit"}],
+        [{"text": "🗑 Видалити товар", "callback_data": "admin_product_delete"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
 
 def get_orders_menu():
     """Меню керування замовленнями"""
     keyboard = [
-        [InlineKeyboardButton("📋 Всі замовлення", callback_data="admin_order_all")],
-        [InlineKeyboardButton("🆕 Нові замовлення", callback_data="admin_order_new")],
-        [InlineKeyboardButton("⚡ Швидкі замовлення", callback_data="admin_order_quick")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]
+        [{"text": "📋 Всі замовлення", "callback_data": "admin_order_all"}],
+        [{"text": "🆕 Нові замовлення", "callback_data": "admin_order_new"}],
+        [{"text": "⚡ Швидкі замовлення", "callback_data": "admin_order_quick"}],
+        [{"text": "📞 Пошук за телефоном", "callback_data": "admin_order_by_phone"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
+
+def get_customers_menu():
+    """Меню керування клієнтами"""
+    keyboard = [
+        [{"text": "📋 Всі клієнти", "callback_data": "admin_customers_all"}],
+        [{"text": "🔍 Пошук за телефоном", "callback_data": "admin_customer_search"}],
+        [{"text": "👑 VIP клієнти", "callback_data": "admin_customers_vip"}],
+        [{"text": "⭐ Постійні клієнти", "callback_data": "admin_customers_regular"}],
+        [{"text": "🆕 Нові клієнти", "callback_data": "admin_customers_new"}],
+        [{"text": "💤 Неактивні клієнти", "callback_data": "admin_customers_inactive"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
+    ]
+    return create_inline_keyboard(keyboard)
+
+def get_broadcast_menu():
+    """Меню розсилок"""
+    keyboard = [
+        [{"text": "📢 Всім клієнтам", "callback_data": "broadcast_all"}],
+        [{"text": "👑 VIP клієнтам", "callback_data": "broadcast_vip"}],
+        [{"text": "⭐ Постійним клієнтам", "callback_data": "broadcast_regular"}],
+        [{"text": "🆕 Новим клієнтам", "callback_data": "broadcast_new"}],
+        [{"text": "💤 Неактивним клієнтам", "callback_data": "broadcast_inactive"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
+    ]
+    return create_inline_keyboard(keyboard)
 
 def get_reports_menu():
     """Меню звітів"""
     keyboard = [
-        [InlineKeyboardButton("📦 Замовлення (TXT)", callback_data="report_orders_txt")],
-        [InlineKeyboardButton("📦 Замовлення (CSV)", callback_data="report_orders_csv")],
-        [InlineKeyboardButton("👥 Користувачі (TXT)", callback_data="report_users_txt")],
-        [InlineKeyboardButton("👥 Користувачі (CSV)", callback_data="report_users_csv")],
-        [InlineKeyboardButton("⚡ Швидкі замовлення (TXT)", callback_data="report_quick_txt")],
-        [InlineKeyboardButton("⚡ Швидкі замовлення (CSV)", callback_data="report_quick_csv")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]
+        [{"text": "📦 Замовлення (TXT)", "callback_data": "report_orders_txt"}],
+        [{"text": "📦 Замовлення (CSV)", "callback_data": "report_orders_csv"}],
+        [{"text": "👥 Клієнти (TXT)", "callback_data": "report_users_txt"}],
+        [{"text": "👥 Клієнти (CSV)", "callback_data": "report_users_csv"}],
+        [{"text": "⚡ Швидкі замовлення (TXT)", "callback_data": "report_quick_txt"}],
+        [{"text": "⚡ Швидкі замовлення (CSV)", "callback_data": "report_quick_csv"}],
+        [{"text": "📊 Статистика (TXT)", "callback_data": "report_stats_txt"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
+
+def get_admins_menu():
+    """Меню керування адмінами"""
+    keyboard = [
+        [{"text": "📋 Список адмінів", "callback_data": "admin_list"}],
+        [{"text": "➕ Додати адміна", "callback_data": "admin_add"}],
+        [{"text": "🗑 Видалити адміна", "callback_data": "admin_remove"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
+    ]
+    return create_inline_keyboard(keyboard)
 
 def get_settings_menu():
     """Меню налаштувань"""
     keyboard = [
-        [InlineKeyboardButton("🔑 Змінити пароль", callback_data="admin_settings_password")],
-        [InlineKeyboardButton("📢 Розсилка", callback_data="admin_settings_broadcast")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]
+        [{"text": "🔑 Змінити пароль", "callback_data": "admin_settings_password"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
 
 def get_order_actions_menu(order_id: int):
     """Меню дій із замовленням"""
     keyboard = [
-        [InlineKeyboardButton("✅ Підтвердити", callback_data=f"order_confirm_{order_id}")],
-        [InlineKeyboardButton("📦 Відправлено", callback_data=f"order_shipped_{order_id}")],
-        [InlineKeyboardButton("❌ Скасувати", callback_data=f"order_cancel_{order_id}")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")]
+        [{"text": "✅ Підтвердити", "callback_data": f"order_confirm_{order_id}"}],
+        [{"text": "📦 Упаковано", "callback_data": f"order_packed_{order_id}"}],
+        [{"text": "🚚 Відправлено", "callback_data": f"order_shipped_{order_id}"}],
+        [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}"}],
+        [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}"}],
+        [{"text": "⭐ Запитати відгук", "callback_data": f"order_review_{order_id}"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_order_all"}]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    return create_inline_keyboard(keyboard)
+
+def get_customer_actions_menu(user_id: int):
+    """Меню дій з клієнтом"""
+    keyboard = [
+        [{"text": "📋 Історія замовлень", "callback_data": f"customer_orders_{user_id}"}],
+        [{"text": "💬 Повідомлення", "callback_data": f"customer_messages_{user_id}"}],
+        [{"text": "📢 Надіслати повідомлення", "callback_data": f"customer_message_{user_id}"}],
+        [{"text": "⭐ Запитати відгук", "callback_data": f"customer_review_{user_id}"}],
+        [{"text": "👑 Зробити адміном", "callback_data": f"customer_make_admin_{user_id}"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_customers"}]
+    ]
+    return create_inline_keyboard(keyboard)
 
 # ==================== ПЕРЕВІРКА АВТОРИЗАЦІЇ ====================
 
@@ -617,6 +889,10 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "state": "authenticated", 
             "authenticated_at": datetime.now().isoformat()
         }
+        
+        # Перевіряємо чи є в списку адмінів
+        if not is_admin(user_id):
+            add_admin(user_id, user.username or "", user_id)
         
         await update.message.reply_text(
             "✅ Пароль прийнято!\n\n"
@@ -675,8 +951,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_product_list":
         products = get_all_products()
         if not products:
-            text = "📦 Список товарів\n\n"
-            text += "Товарів не знайдено."
+            text = "📦 Список товарів\n\nТоварів не знайдено."
         else:
             text = "📦 Список товарів\n\n"
             for p in products:
@@ -702,7 +977,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_product_edit":
         products = get_all_products()
         keyboard = []
-        for p in products[:10]:  # Показуємо перші 10
+        for p in products[:20]:
             keyboard.append([InlineKeyboardButton(
                 f"{p['id']}. {p['name'][:30]}", 
                 callback_data=f"edit_product_{p['id']}"
@@ -762,7 +1037,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_product_delete":
         products = get_all_products()
         keyboard = []
-        for p in products[:10]:
+        for p in products[:20]:
             keyboard.append([InlineKeyboardButton(
                 f"❌ {p['id']}. {p['name'][:30]}", 
                 callback_data=f"delete_product_{p['id']}"
@@ -810,24 +1085,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_order_all":
         orders = get_all_orders()
         if not orders:
-            text = "📋 Всі замовлення\n\n"
-            text += "Замовлень не знайдено."
+            text = "📋 Всі замовлення\n\nЗамовлень не знайдено."
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        text = f"📋 Всі замовлення\n\n"
-        text += f"Всього: {len(orders)}\n\n"
+        text = f"📋 Всі замовлення\n\nВсього: {len(orders)}\n\n"
         
-        for order in orders[:5]:  # Показуємо перші 5
-            text += f"№{order['order_id']} | {order['created_at'][:10]}\n"
+        for order in orders[:10]:
+            text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
             text += f"Клієнт: {order['user_name']}\n"
+            text += f"Телефон: {order['phone']}\n"
             text += f"Сума: {order['total']:.2f} грн\n"
             text += f"Статус: {order['status']}\n"
             text += f"{'─'*30}\n"
         
-        if len(orders) > 5:
-            text += f"... та ще {len(orders) - 5} замовлень\n\n"
+        if len(orders) > 10:
+            text += f"... та ще {len(orders) - 10} замовлень\n\n"
         
         keyboard = [
             [InlineKeyboardButton("🔍 Детально", callback_data="admin_order_details")],
@@ -838,7 +1112,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "admin_order_details":
         orders = get_all_orders()
         keyboard = []
-        for order in orders[:10]:
+        for order in orders[:20]:
             keyboard.append([InlineKeyboardButton(
                 f"№{order['order_id']} - {order['user_name']} - {order['total']} грн",
                 callback_data=f"order_view_{order['order_id']}"
@@ -849,6 +1123,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📋 Детальний перегляд замовлень\n\n"
             "Оберіть замовлення:",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data == "admin_order_new":
+        orders = get_new_orders()
+        if not orders:
+            text = "🆕 Нові замовлення\n\nНових замовлень немає."
+        else:
+            text = f"🆕 Нові замовлення\n\nВсього: {len(orders)}\n\n"
+            for order in orders[:10]:
+                text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+                text += f"Клієнт: {order['user_name']}\n"
+                text += f"Сума: {order['total']:.2f} грн\n"
+                text += f"Телефон: {order['phone']}\n"
+                text += f"{'─'*30}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_order_quick":
+        orders = get_quick_orders()
+        if not orders:
+            text = "⚡ Швидкі замовлення\n\nШвидких замовлень немає."
+        else:
+            text = f"⚡ Швидкі замовлення\n\nВсього: {len(orders)}\n\n"
+            for order in orders[:10]:
+                text += f"№{order['id']} | {order['created_at'][:16]}\n"
+                text += f"Клієнт: {order['user_name']}\n"
+                text += f"Телефон: {order['phone']}\n"
+                text += f"Продукт: {order['product_name']}\n"
+                text += f"Спосіб: {order['contact_method']}\n"
+                text += f"{'─'*30}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_order_by_phone":
+        admin_sessions[user_id] = {
+            "state": "authenticated",
+            "action": "search_orders_by_phone"
+        }
+        await query.edit_message_text(
+            "📞 Пошук замовлень за телефоном\n\n"
+            "Введіть номер телефону клієнта:"
         )
     
     elif data.startswith("order_view_"):
@@ -865,19 +1182,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             
             text = f"📋 ЗАМОВЛЕННЯ №{order_id}\n\n"
-            text += f"Дата: {order['created_at']}\n"
-            text += f"Клієнт: {order['user_name']}\n"
-            text += f"Телефон: {order['phone']}\n"
-            text += f"Username: @{order['username']}\n"
-            text += f"Місто: {order['city']}\n"
-            text += f"Відділення: {order['np_department']}\n"
+            text += f"📅 Дата: {order['created_at']}\n"
+            text += f"👤 Клієнт: {order['user_name']}\n"
+            text += f"📞 Телефон: {order['phone']}\n"
+            text += f"📱 Username: @{order['username']}\n"
+            text += f"🏙️ Місто: {order['city']}\n"
+            text += f"🏣 Відділення: {order['np_department']}\n"
             text += f"{'─'*30}\n"
-            text += "Товари:\n"
+            text += "📦 Товари:\n"
             for item in items:
                 text += f"  • {item['product_name']} x{item['quantity']} = {item['price_per_unit'] * item['quantity']:.2f} грн\n"
             text += f"{'─'*30}\n"
-            text += f"Сума: {order['total']:.2f} грн\n"
-            text += f"Статус: {order['status']}\n"
+            text += f"💰 Сума: {order['total']:.2f} грн\n"
+            text += f"📊 Статус: {order['status']}\n"
             
             await query.edit_message_text(
                 text,
@@ -888,8 +1205,53 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = int(data.split("_")[2])
         if update_order_status(order_id, "підтверджено"):
             text = f"✅ Замовлення №{order_id} підтверджено!"
+            
+            # Відправляємо повідомлення клієнту
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                user_id = cursor.fetchone()[0]
+                conn.close()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"✅ <b>Замовлення №{order_id} підтверджено!</b>\n\n"
+                             f"Ваше замовлення прийнято в роботу. Ми повідомимо вас про зміну статусу.",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
         else:
             text = f"❌ Помилка при підтвердженні замовлення"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("order_packed_"):
+        order_id = int(data.split("_")[2])
+        if update_order_status(order_id, "упаковано"):
+            text = f"📦 Замовлення №{order_id} упаковано!"
+            
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                user_id = cursor.fetchone()[0]
+                conn.close()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"📦 <b>Замовлення №{order_id} упаковано!</b>\n\n"
+                             f"Ваше замовлення готове до відправки. Очікуйте на номер для відстеження.",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+        else:
+            text = f"❌ Помилка при оновленні статусу"
         
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -897,7 +1259,52 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("order_shipped_"):
         order_id = int(data.split("_")[2])
         if update_order_status(order_id, "відправлено"):
-            text = f"📦 Замовлення №{order_id} відправлено!"
+            text = f"🚚 Замовлення №{order_id} відправлено!"
+            
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                user_id = cursor.fetchone()[0]
+                conn.close()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"🚚 <b>Замовлення №{order_id} відправлено!</b>\n\n"
+                             f"Ваше замовлення вже в дорозі. Очікуйте на повідомлення про прибуття.",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+        else:
+            text = f"❌ Помилка при оновленні статусу"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("order_arrived_"):
+        order_id = int(data.split("_")[2])
+        if update_order_status(order_id, "прибуло"):
+            text = f"📍 Замовлення №{order_id} прибуло у відділення!"
+            
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                user_id = cursor.fetchone()[0]
+                conn.close()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"📍 <b>Замовлення №{order_id} прибуло!</b>\n\n"
+                             f"Ваше замовлення вже чекає на вас у відділенні Нової Пошти. "
+                             f"Не забудьте отримати його!",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
         else:
             text = f"❌ Помилка при оновленні статусу"
         
@@ -908,86 +1315,299 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         order_id = int(data.split("_")[2])
         if update_order_status(order_id, "скасовано"):
             text = f"❌ Замовлення №{order_id} скасовано!"
+            
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+                user_id = cursor.fetchone()[0]
+                conn.close()
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"❌ <b>Замовлення №{order_id} скасовано</b>\n\n"
+                             f"Якщо у вас виникли питання, зв'яжіться з нами: @support",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
         else:
             text = f"❌ Помилка при скасуванні замовлення"
         
         keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
-    elif data == "admin_order_new":
-        orders = get_new_orders()
-        if not orders:
-            text = "🆕 Нові замовлення\n\n"
-            text += "Нових замовлень немає."
-        else:
-            text = f"🆕 Нові замовлення\n\n"
-            text += f"Всього: {len(orders)}\n\n"
-            for order in orders:
-                text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
-                text += f"Клієнт: {order['user_name']}\n"
-                text += f"Сума: {order['total']:.2f} грн\n"
-                text += f"{'─'*30}\n"
+    elif data.startswith("order_review_"):
+        order_id = int(data.split("_")[2])
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        conn = get_db_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM orders WHERE order_id = ?", (order_id,))
+            user_id = cursor.fetchone()[0]
+            conn.close()
+            
+            if await send_review_request(context, user_id, order_id):
+                text = f"✅ Запит на відгук для замовлення №{order_id} надіслано!"
+            else:
+                text = f"❌ Помилка при надсиланні запиту"
+            
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
-    elif data == "admin_order_quick":
-        orders = get_quick_orders()
-        if not orders:
-            text = "⚡ Швидкі замовлення\n\n"
-            text += "Швидких замовлень немає."
-        else:
-            text = f"⚡ Швидкі замовлення\n\n"
-            text += f"Всього: {len(orders)}\n\n"
-            for order in orders[:10]:
-                text += f"№{order['id']} | {order['created_at'][:16]}\n"
-                text += f"Клієнт: {order['user_name']}\n"
-                text += f"Телефон: {order['phone']}\n"
-                text += f"Продукт: {order['product_name']}\n"
-                text += f"{'─'*30}\n"
-        
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    # ===== КЛІЄНТИ =====
+    elif data == "admin_customers":
+        await query.edit_message_text(
+            "👥 Керування клієнтами\n\n"
+            "Оберіть дію:",
+            reply_markup=get_customers_menu()
+        )
     
-    # ===== СТАТИСТИКА =====
-    elif data == "admin_stats":
-        stats = get_statistics()
-        
-        text = "📊 СТАТИСТИКА\n\n"
-        text += f"📋 Замовлень: {stats.get('total_orders', 0)}\n"
-        text += f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n"
-        text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
-        text += f"👥 Користувачів: {stats.get('total_users', 0)}\n"
-        text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
-        
-        orders_by_status = stats.get('orders_by_status', {})
-        if orders_by_status:
-            text += "Статуси замовлень:\n"
-            for status, count in orders_by_status.items():
-                text += f"  • {status}: {count}\n"
-        
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    # ===== КОРИСТУВАЧІ =====
-    elif data == "admin_users":
+    elif data == "admin_customers_all":
         users = get_all_users()
+        text = f"👥 ВСІ КЛІЄНТИ\n\nВсього: {len(users)}\n\n"
         
-        text = "👥 КОРИСТУВАЧІ\n\n"
-        text += f"Всього: {len(users)}\n\n"
-        
-        for user in users[:10]:
+        for user in users[:20]:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
             text += f"ID: {user['user_id']}\n"
             text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
             text += f"Username: @{user['username']}\n"
-            text += f"Дата: {user['created_at'][:16]}\n"
+            text += f"📊 {segment}\n"
+            text += f"📦 Замовлень: {len(orders)}\n"
             text += f"{'─'*30}\n"
         
-        if len(users) > 10:
-            text += f"... та ще {len(users) - 10} користувачів"
+        if len(users) > 20:
+            text += f"... та ще {len(users) - 20} клієнтів"
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_customers_vip":
+        users = get_all_users()
+        text = "👑 VIP КЛІЄНТИ\n\n"
+        count = 0
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            if "VIP" in segment:
+                count += 1
+                text += f"ID: {user['user_id']}\n"
+                text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                text += f"Username: @{user['username']}\n"
+                text += f"📦 Замовлень: {len(orders)}\n"
+                text += f"{'─'*30}\n"
+        
+        text = f"👑 VIP КЛІЄНТИ\n\nЗнайдено: {count}\n\n" + text if count > 0 else "👑 VIP клієнтів не знайдено"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_customers_regular":
+        users = get_all_users()
+        text = "⭐ ПОСТІЙНІ КЛІЄНТИ\n\n"
+        count = 0
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            if "Постійний" in segment:
+                count += 1
+                text += f"ID: {user['user_id']}\n"
+                text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                text += f"Username: @{user['username']}\n"
+                text += f"📦 Замовлень: {len(orders)}\n"
+                text += f"{'─'*30}\n"
+        
+        text = f"⭐ ПОСТІЙНІ КЛІЄНТИ\n\nЗнайдено: {count}\n\n" + text if count > 0 else "⭐ Постійних клієнтів не знайдено"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_customers_new":
+        users = get_all_users()
+        text = "🆕 НОВІ КЛІЄНТИ\n\n"
+        count = 0
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            if "Новий" in segment:
+                count += 1
+                text += f"ID: {user['user_id']}\n"
+                text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                text += f"Username: @{user['username']}\n"
+                text += f"📦 Замовлень: {len(orders)}\n"
+                text += f"{'─'*30}\n"
+        
+        text = f"🆕 НОВІ КЛІЄНТИ\n\nЗнайдено: {count}\n\n" + text if count > 0 else "🆕 Нових клієнтів не знайдено"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_customers_inactive":
+        users = get_all_users()
+        text = "💤 НЕАКТИВНІ КЛІЄНТИ\n\n"
+        count = 0
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            if "Неактивний" in segment:
+                count += 1
+                text += f"ID: {user['user_id']}\n"
+                text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                text += f"Username: @{user['username']}\n"
+                text += f"Останнє замовлення: {orders[0]['created_at'][:16] if orders else 'Немає'}\n"
+                text += f"{'─'*30}\n"
+        
+        text = f"💤 НЕАКТИВНІ КЛІЄНТИ\n\nЗнайдено: {count}\n\n" + text if count > 0 else "💤 Неактивних клієнтів не знайдено"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_customer_search":
+        admin_sessions[user_id] = {
+            "state": "authenticated",
+            "action": "search_customer_by_phone"
+        }
+        await query.edit_message_text(
+            "🔍 Пошук клієнта за телефоном\n\n"
+            "Введіть номер телефону:"
+        )
+    
+    elif data.startswith("customer_view_"):
+        customer_id = int(data.split("_")[2])
+        user = get_user_by_id(customer_id)
+        if not user:
+            await query.edit_message_text("❌ Клієнта не знайдено")
+            return
+        
+        orders = get_user_orders(customer_id)
+        messages = get_user_messages(customer_id)
+        quick_orders = get_user_quick_orders(customer_id)
+        segment = get_customer_segment(user, orders)
+        
+        text = f"👤 ПРОФІЛЬ КЛІЄНТА\n\n"
+        text += f"ID: {user['user_id']}\n"
+        text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+        text += f"Username: @{user['username']}\n"
+        text += f"📅 Реєстрація: {user['created_at'][:16]}\n"
+        text += f"📊 Сегмент: {segment}\n\n"
+        
+        if orders:
+            total_spent = sum(o['total'] for o in orders)
+            text += f"📦 Всього замовлень: {len(orders)}\n"
+            text += f"💰 Загальна сума: {total_spent:.2f} грн\n"
+            text += f"💳 Середній чек: {total_spent/len(orders):.2f} грн\n\n"
+            
+            text += "🆕 Останнє замовлення:\n"
+            last = orders[0]
+            text += f"   №{last['order_id']} від {last['created_at'][:16]}\n"
+            text += f"   Сума: {last['total']:.2f} грн\n"
+            text += f"   Статус: {last['status']}\n"
+        else:
+            text += "📦 Замовлень: 0\n"
+        
+        text += f"\n💬 Повідомлень: {len(messages)}\n"
+        text += f"⚡ Швидких замовлень: {len(quick_orders)}"
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=get_customer_actions_menu(customer_id)
+        )
+    
+    elif data.startswith("customer_orders_"):
+        customer_id = int(data.split("_")[2])
+        orders = get_user_orders(customer_id)
+        
+        if not orders:
+            text = "📋 Історія замовлень\n\nУ клієнта немає замовлень."
+        else:
+            text = f"📋 ІСТОРІЯ ЗАМОВЛЕНЬ\n\nВсього: {len(orders)}\n\n"
+            for order in orders:
+                text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+                text += f"Сума: {order['total']:.2f} грн\n"
+                text += f"Статус: {order['status']}\n"
+                text += f"{'─'*30}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("customer_messages_"):
+        customer_id = int(data.split("_")[2])
+        messages = get_user_messages(customer_id)
+        
+        if not messages:
+            text = "💬 Повідомлення\n\nУ клієнта немає повідомлень."
+        else:
+            text = f"💬 ОСТАННІ ПОВІДОМЛЕННЯ\n\n"
+            for msg in messages[:10]:
+                text += f"📅 {msg['created_at'][:16]}\n"
+                text += f"📝 {msg['text'][:100]}\n"
+                text += f"{'─'*30}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("customer_message_"):
+        customer_id = int(data.split("_")[2])
+        admin_sessions[user_id] = {
+            "state": "authenticated",
+            "action": "send_message_to_customer",
+            "customer_id": customer_id
+        }
+        await query.edit_message_text(
+            "📢 Надіслати повідомлення клієнту\n\n"
+            "Введіть текст повідомлення:"
+        )
+    
+    elif data.startswith("customer_review_"):
+        customer_id = int(data.split("_")[2])
+        if await send_review_request(context, customer_id):
+            text = "✅ Запит на відгук надіслано!"
+        else:
+            text = "❌ Помилка при надсиланні запиту"
+        
+        keyboard = [[InlineButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("customer_make_admin_"):
+        customer_id = int(data.split("_")[3])
+        user = get_user_by_id(customer_id)
+        
+        if user:
+            if add_admin(customer_id, user['username'], user_id):
+                text = f"✅ Користувача {user['first_name']} додано до адмінів!"
+            else:
+                text = "❌ Помилка при додаванні адміна"
+        else:
+            text = "❌ Користувача не знайдено"
+        
+        keyboard = [[InlineButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # ===== РОЗСИЛКИ =====
+    elif data == "admin_broadcast":
+        await query.edit_message_text(
+            "📢 Розсилка повідомлень\n\n"
+            "Оберіть цільову аудиторію:",
+            reply_markup=get_broadcast_menu()
+        )
+    
+    elif data.startswith("broadcast_"):
+        segment = data.replace("broadcast_", "")
+        admin_sessions[user_id] = {
+            "state": "authenticated",
+            "action": "broadcast",
+            "segment": segment
+        }
+        await query.edit_message_text(
+            f"📢 Розсилка для сегменту: {segment}\n\n"
+            f"Введіть текст повідомлення для розсилки:"
+        )
     
     # ===== ЗВІТИ =====
     elif data == "admin_reports":
@@ -998,7 +1618,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data == "report_orders_txt":
-        report_data = generate_orders_report("txt")
+        orders = get_all_orders()
+        report_data = generate_orders_report(orders, "txt")
         await query.message.reply_document(
             document=report_data,
             filename=f"orders_report_{datetime.now().strftime('%Y%m%d')}.txt",
@@ -1010,7 +1631,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data == "report_orders_csv":
-        report_data = generate_orders_report("csv")
+        orders = get_all_orders()
+        report_data = generate_orders_report(orders, "csv")
         await query.message.reply_document(
             document=report_data,
             filename=f"orders_report_{datetime.now().strftime('%Y%m%d')}.csv",
@@ -1022,52 +1644,240 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif data == "report_users_txt":
-        report_data = generate_users_report("txt")
+        users = get_all_users()
+        output = StringIO()
+        output.write("ЗВІТ ПО КЛІЄНТАХ\n")
+        output.write("=" * 80 + "\n")
+        output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        output.write(f"Всього клієнтів: {len(users)}\n")
+        output.write("=" * 80 + "\n\n")
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            output.write(f"ID: {user['user_id']}\n")
+            output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
+            output.write(f"Username: @{user['username']}\n")
+            output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
+            output.write(f"Сегмент: {segment}\n")
+            output.write(f"Замовлень: {len(orders)}\n")
+            output.write("-" * 40 + "\n")
+        
         await query.message.reply_document(
-            document=report_data,
+            document=output.getvalue().encode('utf-8'),
             filename=f"users_report_{datetime.now().strftime('%Y%m%d')}.txt",
-            caption="👥 Звіт по користувачах"
+            caption="👥 Звіт по клієнтах"
         )
-        await query.edit_message_text(
-            "✅ Звіт згенеровано!",
-            reply_markup=get_reports_menu()
-        )
+        await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
     
     elif data == "report_users_csv":
-        report_data = generate_users_report("csv")
+        users = get_all_users()
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Імя', 'Прізвище', 'Username', 'Дата реєстрації', 'Сегмент', 'Замовлень'])
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            segment = get_customer_segment(user, orders)
+            writer.writerow([
+                user['user_id'],
+                user['first_name'],
+                user['last_name'],
+                user['username'],
+                user['created_at'][:16],
+                segment,
+                len(orders)
+            ])
+        
         await query.message.reply_document(
-            document=report_data,
+            document=output.getvalue().encode('utf-8-sig'),
             filename=f"users_report_{datetime.now().strftime('%Y%m%d')}.csv",
-            caption="👥 Звіт по користувачах (CSV)"
+            caption="👥 Звіт по клієнтах (CSV)"
         )
-        await query.edit_message_text(
-            "✅ Звіт згенеровано!",
-            reply_markup=get_reports_menu()
-        )
+        await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
     
     elif data == "report_quick_txt":
-        report_data = generate_quick_orders_report("txt")
+        orders = get_quick_orders()
+        output = StringIO()
+        output.write("ЗВІТ ПО ШВИДКИХ ЗАМОВЛЕННЯХ\n")
+        output.write("=" * 80 + "\n")
+        output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        output.write(f"Всього замовлень: {len(orders)}\n")
+        output.write("=" * 80 + "\n\n")
+        
+        for order in orders:
+            output.write(f"Номер: {order['id']}\n")
+            output.write(f"Дата: {order['created_at']}\n")
+            output.write(f"Клієнт: {order['user_name']}\n")
+            output.write(f"Телефон: {order['phone']}\n")
+            output.write(f"Username: @{order['username']}\n")
+            output.write(f"Продукт: {order['product_name']}\n")
+            output.write(f"Спосіб зв'язку: {order['contact_method']}\n")
+            output.write(f"Статус: {order['status']}\n")
+            output.write("-" * 40 + "\n")
+        
         await query.message.reply_document(
-            document=report_data,
+            document=output.getvalue().encode('utf-8'),
             filename=f"quick_orders_report_{datetime.now().strftime('%Y%m%d')}.txt",
             caption="⚡ Звіт по швидких замовленнях"
         )
-        await query.edit_message_text(
-            "✅ Звіт згенеровано!",
-            reply_markup=get_reports_menu()
-        )
+        await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
     
     elif data == "report_quick_csv":
-        report_data = generate_quick_orders_report("csv")
+        orders = get_quick_orders()
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Продукт', 'Спосіб зв`язку', 'Статус'])
+        
+        for order in orders:
+            writer.writerow([
+                order['id'],
+                order['created_at'],
+                order['user_name'],
+                order['phone'],
+                order['username'],
+                order['product_name'],
+                order['contact_method'],
+                order['status']
+            ])
+        
         await query.message.reply_document(
-            document=report_data,
+            document=output.getvalue().encode('utf-8-sig'),
             filename=f"quick_orders_report_{datetime.now().strftime('%Y%m%d')}.csv",
             caption="⚡ Звіт по швидких замовленнях (CSV)"
         )
-        await query.edit_message_text(
-            "✅ Звіт згенеровано!",
-            reply_markup=get_reports_menu()
+        await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    
+    elif data == "report_stats_txt":
+        stats = get_statistics()
+        output = StringIO()
+        output.write("СТАТИСТИКА\n")
+        output.write("=" * 80 + "\n")
+        output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        output.write("=" * 80 + "\n\n")
+        
+        output.write(f"📋 Замовлень: {stats.get('total_orders', 0)}\n")
+        output.write(f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n")
+        output.write(f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n")
+        output.write(f"👥 Клієнтів: {stats.get('total_users', 0)}\n")
+        output.write(f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n")
+        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n")
+        
+        output.write("📊 Замовлення за останні 30 днів:\n")
+        output.write(f"   Кількість: {stats.get('last_30_days_orders', 0)}\n")
+        output.write(f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n")
+        
+        output.write("📊 Статуси замовлень:\n")
+        for status, count in stats.get('orders_by_status', {}).items():
+            output.write(f"   • {status}: {count}\n")
+        
+        output.write("\n👥 Сегментація клієнтів:\n")
+        segments = stats.get('segments', {})
+        output.write(f"   👑 VIP: {segments.get('vip', 0)}\n")
+        output.write(f"   ⭐ Постійні: {segments.get('regular', 0)}\n")
+        output.write(f"   🆕 Нові: {segments.get('new', 0)}\n")
+        output.write(f"   📊 Активні: {segments.get('active', 0)}\n")
+        output.write(f"   💤 Неактивні: {segments.get('inactive', 0)}\n")
+        
+        await query.message.reply_document(
+            document=output.getvalue().encode('utf-8'),
+            filename=f"stats_report_{datetime.now().strftime('%Y%m%d')}.txt",
+            caption="📊 Статистика"
         )
+        await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    
+    # ===== АДМІНИ =====
+    elif data == "admin_manage_admins":
+        await query.edit_message_text(
+            "👑 Керування адміністраторами\n\n"
+            "Оберіть дію:",
+            reply_markup=get_admins_menu()
+        )
+    
+    elif data == "admin_list":
+        admins = get_all_admins()
+        if not admins:
+            text = "📋 Список адмінів\n\nАдмінів не знайдено."
+        else:
+            text = "📋 СПИСОК АДМІНІСТРАТОРІВ\n\n"
+            for admin in admins:
+                text += f"ID: {admin['user_id']}\n"
+                text += f"Username: @{admin['username']}\n"
+                text += f"Додано: {admin['added_at'][:16]}\n"
+                text += f"{'─'*30}\n"
+        
+        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_manage_admins")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data == "admin_add":
+        admin_sessions[user_id] = {
+            "state": "authenticated",
+            "action": "add_admin"
+        }
+        await query.edit_message_text(
+            "➕ Додавання адміністратора\n\n"
+            "Введіть Telegram ID користувача:"
+        )
+    
+    elif data == "admin_remove":
+        admins = get_all_admins()
+        keyboard = []
+        for admin in admins:
+            if admin['user_id'] != user_id:  # Не можна видалити себе
+                keyboard.append([InlineButton(
+                    f"❌ {admin['user_id']} - @{admin['username']}", 
+                    callback_data=f"remove_admin_{admin['user_id']}"
+                )])
+        keyboard.append([InlineButton("🔙 Назад", callback_data="admin_manage_admins")])
+        
+        await query.edit_message_text(
+            "🗑 Видалення адміністратора\n\n"
+            "Оберіть адміна для видалення:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    elif data.startswith("remove_admin_"):
+        admin_id = int(data.split("_")[2])
+        if admin_id == user_id:
+            text = "❌ Не можна видалити самого себе!"
+        elif remove_admin(admin_id):
+            text = "✅ Адміна успішно видалено!"
+        else:
+            text = "❌ Помилка при видаленні адміна"
+        
+        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_manage_admins")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # ===== СТАТИСТИКА =====
+    elif data == "admin_stats":
+        stats = get_statistics()
+        
+        text = "📊 СТАТИСТИКА\n\n"
+        text += f"📋 Замовлень: {stats.get('total_orders', 0)}\n"
+        text += f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n"
+        text += f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n"
+        text += f"👥 Клієнтів: {stats.get('total_users', 0)}\n"
+        text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
+        text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
+        
+        text += "📊 Замовлення за останні 30 днів:\n"
+        text += f"   Кількість: {stats.get('last_30_days_orders', 0)}\n"
+        text += f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n"
+        
+        text += "📊 Статуси замовлень:\n"
+        for status, count in stats.get('orders_by_status', {}).items():
+            text += f"   • {status}: {count}\n"
+        
+        text += "\n👥 Сегментація клієнтів:\n"
+        segments = stats.get('segments', {})
+        text += f"   👑 VIP: {segments.get('vip', 0)}\n"
+        text += f"   ⭐ Постійні: {segments.get('regular', 0)}\n"
+        text += f"   🆕 Нові: {segments.get('new', 0)}\n"
+        text += f"   📊 Активні: {segments.get('active', 0)}\n"
+        text += f"   💤 Неактивні: {segments.get('inactive', 0)}\n"
+        
+        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_back_main")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     # ===== НАЛАШТУВАННЯ =====
     elif data == "admin_settings":
@@ -1085,16 +1895,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "🔑 Зміна пароля\n\n"
             "Введіть новий пароль:"
-        )
-    
-    elif data == "admin_settings_broadcast":
-        admin_sessions[user_id] = {
-            "state": "authenticated",
-            "action": "broadcast_message"
-        }
-        await query.edit_message_text(
-            "📢 Розсилка повідомлень\n\n"
-            "Введіть текст для розсилки:"
         )
 
 # ==================== ОБРОБНИК ТЕКСТОВИХ ПОВІДОМЛЕНЬ ====================
@@ -1213,6 +2013,114 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         admin_sessions[user_id].pop("action", None)
     
+    # Пошук замовлень за телефоном
+    elif action == "search_orders_by_phone":
+        orders = get_orders_by_phone(text)
+        
+        if not orders:
+            await update.message.reply_text(
+                f"❌ Замовлень за номером {text} не знайдено",
+                reply_markup=get_orders_menu()
+            )
+        else:
+            response = f"📋 Знайдено замовлень: {len(orders)}\n\n"
+            for order in orders[:5]:
+                response += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+                response += f"Сума: {order['total']:.2f} грн\n"
+                response += f"Статус: {order['status']}\n"
+                response += f"{'─'*30}\n"
+            
+            keyboard = []
+            for order in orders[:10]:
+                keyboard.append([InlineButton(
+                    f"📦 №{order['order_id']}",
+                    callback_data=f"order_view_{order['order_id']}"
+                )])
+            keyboard.append([InlineButton("🔙 Назад", callback_data="admin_orders")])
+            
+            await update.message.reply_text(
+                response,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        admin_sessions[user_id].pop("action", None)
+    
+    # Пошук клієнта за телефоном
+    elif action == "search_customer_by_phone":
+        user_data = get_user_by_phone(text)
+        
+        if not user_data:
+            await update.message.reply_text(
+                f"❌ Клієнта з телефоном {text} не знайдено",
+                reply_markup=get_customers_menu()
+            )
+        else:
+            orders = get_user_orders(user_data['user_id'])
+            segment = get_customer_segment(user_data, orders)
+            
+            response = f"👤 КЛІЄНТ ЗНАЙДЕНИЙ\n\n"
+            response += f"ID: {user_data['user_id']}\n"
+            response += f"Ім'я: {user_data['first_name']} {user_data['last_name']}\n"
+            response += f"Username: @{user_data['username']}\n"
+            response += f"📊 Сегмент: {segment}\n"
+            response += f"📦 Замовлень: {len(orders)}\n\n"
+            
+            if orders:
+                total = sum(o['total'] for o in orders)
+                response += f"💰 Загальна сума: {total:.2f} грн"
+            
+            keyboard = [[InlineButton(
+                "👤 Переглянути профіль",
+                callback_data=f"customer_view_{user_data['user_id']}"
+            )]]
+            keyboard.append([InlineButton("🔙 Назад", callback_data="admin_customers")])
+            
+            await update.message.reply_text(
+                response,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        
+        admin_sessions[user_id].pop("action", None)
+    
+    # Надіслати повідомлення клієнту
+    elif action == "send_message_to_customer":
+        customer_id = session.get("customer_id")
+        
+        try:
+            await context.bot.send_message(
+                chat_id=customer_id,
+                text=f"📢 <b>Повідомлення від адміністратора</b>\n\n{text}",
+                parse_mode='HTML'
+            )
+            await update.message.reply_text(
+                "✅ Повідомлення надіслано!",
+                reply_markup=get_customer_actions_menu(customer_id)
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Помилка при надсиланні: {e}",
+                reply_markup=get_customer_actions_menu(customer_id)
+            )
+        
+        admin_sessions[user_id].pop("action", None)
+    
+    # Розсилка
+    elif action == "broadcast":
+        segment = session.get("segment")
+        
+        await update.message.reply_text(f"📢 Починаю розсилку для сегменту: {segment}...")
+        
+        sent, failed = await send_broadcast_to_segment(context, segment, text)
+        
+        await update.message.reply_text(
+            f"✅ Розсилка завершена!\n\n"
+            f"✓ Доставлено: {sent}\n"
+            f"✗ Помилок: {failed}",
+            reply_markup=get_broadcast_menu()
+        )
+        
+        admin_sessions[user_id].pop("action", None)
+    
     # Зміна пароля
     elif action == "change_password":
         global ADMIN_PASSWORD
@@ -1223,30 +2131,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         admin_sessions[user_id].pop("action", None)
     
-    # Розсилка
-    elif action == "broadcast_message":
-        users = get_all_users()
-        success_count = 0
-        fail_count = 0
-        
-        await update.message.reply_text(f"📢 Починаю розсилку для {len(users)} користувачів...")
-        
-        for user_data in users:
-            try:
-                await context.bot.send_message(
-                    chat_id=user_data['user_id'],
-                    text=f"📢 ОГОЛОШЕННЯ\n\n{text}"
+    # Додавання адміна
+    elif action == "add_admin":
+        try:
+            new_admin_id = int(text)
+            new_user = get_user_by_id(new_admin_id)
+            
+            if new_user:
+                if add_admin(new_admin_id, new_user['username'], user_id):
+                    await update.message.reply_text(
+                        f"✅ Користувача {new_user['first_name']} додано до адмінів!",
+                        reply_markup=get_admins_menu()
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при додаванні адміна",
+                        reply_markup=get_admins_menu()
+                    )
+            else:
+                await update.message.reply_text(
+                    "❌ Користувача з таким ID не знайдено в базі",
+                    reply_markup=get_admins_menu()
                 )
-                success_count += 1
-            except:
-                fail_count += 1
-        
-        await update.message.reply_text(
-            f"✅ Розсилка завершена!\n\n"
-            f"✓ Доставлено: {success_count}\n"
-            f"✗ Помилок: {fail_count}",
-            reply_markup=get_settings_menu()
-        )
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Введіть коректний числовий ID",
+                reply_markup=get_admins_menu()
+            )
         
         admin_sessions[user_id].pop("action", None)
 
@@ -1260,6 +2171,18 @@ def main():
     conn = get_db_connection()
     if conn:
         logger.info("✅ Підключення до бази даних успішне")
+        
+        # Перевіряємо чи є таблиця admins
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.commit()
         conn.close()
     else:
         logger.warning("⚠️ Не вдалося підключитись до БД основного бота")
