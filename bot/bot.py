@@ -36,13 +36,17 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    logger.error("❌ Токен не найден! Добавьте BOT_TOKEN в переменные окружения Scalingo")
+    logger.error("❌ Токен не найден! Добавьте BOT_TOKEN в переменные окружения")
     exit(1)
 
 logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
 
-# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
+# ==================== ШЛЯХИ ДО ФАЙЛІВ ====================
 
+# ВАЖЛИВО: Використовуємо спільну теку Railway Volume
+DB_PATH = "/app/data/farm_bot.db"
+
+# Логи зберігаємо в локальній папці бота (вони не критичні)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -143,7 +147,10 @@ def check_single_instance():
 def init_database():
     """Инициализация базы данных"""
     try:
-        conn = sqlite3.connect('farm_bot.db', check_same_thread=False)
+        # Переконуємось, що папка /app/data існує
+        os.makedirs("/app/data", exist_ok=True)
+        
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         cursor = conn.cursor()
         
         # Таблица користувачів
@@ -237,7 +244,7 @@ def init_database():
             )
         ''')
         
-        # Таблица товарів (для адмін-панелі)
+        # Таблица товарів
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS products (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -265,7 +272,7 @@ def init_database():
             )
         ''')
         
-        # Таблица адмінів (для сумісності)
+        # Таблица адмінів
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS admins (
                 user_id INTEGER PRIMARY KEY,
@@ -302,7 +309,7 @@ def init_database():
         
         conn.commit()
         conn.close()
-        logger.info("✅ База данных инициализирована")
+        logger.info(f"✅ База данных инициализирована: {DB_PATH}")
         return True
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации базы данных: {e}")
@@ -314,7 +321,7 @@ class Database:
     @staticmethod
     def get_connection():
         """Повертає з'єднання з базою даних"""
-        return sqlite3.connect('farm_bot.db', timeout=20, check_same_thread=False)
+        return sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
     
     @staticmethod
     def save_user(user_id: int, first_name: str = "", last_name: str = "", username: str = ""):
@@ -701,8 +708,104 @@ class Database:
             return "невідомо"
         finally:
             conn.close()
+    
+    @staticmethod
+    def get_all_orders():
+        """Отримує всі замовлення"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT * FROM orders ORDER BY created_at DESC')
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения заказов: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_all_users():
+        """Отримує всіх користувачів"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT * FROM users ORDER BY created_at DESC')
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения пользователей: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_all_admins():
+        """Отримує всіх адмінів"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT * FROM admins')
+            return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения админов: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def add_admin(user_id: int, username: str = "", added_by: int = 0):
+        """Додає адміна"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO admins (user_id, username, added_by)
+                VALUES (?, ?, ?)
+            ''', (user_id, username, added_by))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления админа: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def remove_admin(user_id: int):
+        """Видаляє адміна"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('DELETE FROM admins WHERE user_id = ?', (user_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления админа: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def is_admin(user_id: int) -> bool:
+        """Перевіряє чи є користувач адміном"""
+        conn = Database.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = ?', (user_id,))
+            count = cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки админа: {e}")
+            return False
+        finally:
+            conn.close()
 
-# ==================== ДАНІ ПРОДУКТІВ (тепер з БД) ====================
+# ==================== ДАНІ ПРОДУКТІВ ====================
 
 def get_products_from_db():
     """Отримує товари з БД для сумісності зі старим кодом"""
@@ -1903,6 +2006,9 @@ def main():
         # Добавляем задержку для предотвращения конфликтов при перезапуске
         time.sleep(2)
         
+        # Переконуємось, що папка для БД існує
+        os.makedirs("/app/data", exist_ok=True)
+        
         # Инициализируем базу данных
         if not init_database():
             logger.error("❌ Не удалось инициализировать базу данных")
@@ -1926,6 +2032,7 @@ def main():
         logger.info(f"• Продуктів у базі: {len(PRODUCTS)}")
         logger.info(f"• Виручка: {stats.get('total_revenue', 0):.2f} грн")
         logger.info(f"• Відгуків: {stats.get('total_reviews', 0)}")
+        logger.info(f"• Шлях до БД: {DB_PATH}")
         logger.info("=" * 80)
         logger.info("🔄 Очікування повідомлень...\n")
         
