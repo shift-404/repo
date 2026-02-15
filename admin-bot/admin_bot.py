@@ -40,11 +40,12 @@ ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 
 # ==================== ШЛЯХИ ДО ФАЙЛІВ ====================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "..", "bot", "farm_bot.db")  # Спільна БД з основним ботом
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+# ВАЖЛИВО: Використовуємо спільну теку Railway Volume
+DB_PATH = "/app/data/farm_bot.db"
 
-# Створюємо папку для звітів, якщо її немає
+# Локальна папка для звітів
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 # ==================== СЕСІЇ АДМІНІВ ====================
@@ -56,6 +57,9 @@ admin_sessions = {}
 def get_db_connection():
     """Підключення до бази даних основного бота"""
     try:
+        # Переконуємось, що папка існує
+        os.makedirs("/app/data", exist_ok=True)
+        
         conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
@@ -429,6 +433,9 @@ def get_statistics():
         cursor.execute("SELECT COUNT(*) FROM messages")
         total_messages = cursor.fetchone()[0]
         
+        cursor.execute("SELECT COUNT(*) FROM reviews")
+        total_reviews = cursor.fetchone()[0]
+        
         # Сума замовлень
         cursor.execute("SELECT SUM(total) FROM orders")
         total_revenue = cursor.fetchone()[0] or 0
@@ -476,6 +483,7 @@ def get_statistics():
             "total_users": total_users,
             "total_quick_orders": total_quick_orders,
             "total_messages": total_messages,
+            "total_reviews": total_reviews,
             "total_revenue": total_revenue,
             "avg_check": avg_check,
             "orders_by_status": orders_by_status,
@@ -1571,7 +1579,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = "❌ Помилка при надсиланні запиту"
         
-        keyboard = [[InlineButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data.startswith("customer_make_admin_"):
@@ -1586,7 +1594,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = "❌ Користувача не знайдено"
         
-        keyboard = [[InlineButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     # ===== РОЗСИЛКИ =====
@@ -1761,7 +1769,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output.write(f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n")
         output.write(f"👥 Клієнтів: {stats.get('total_users', 0)}\n")
         output.write(f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n")
-        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n")
+        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n")
+        output.write(f"⭐ Відгуків: {stats.get('total_reviews', 0)}\n\n")
         
         output.write("📊 Замовлення за останні 30 днів:\n")
         output.write(f"   Кількість: {stats.get('last_30_days_orders', 0)}\n")
@@ -1806,7 +1815,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"Додано: {admin['added_at'][:16]}\n"
                 text += f"{'─'*30}\n"
         
-        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_manage_admins")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_manage_admins")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "admin_add":
@@ -1824,11 +1833,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         for admin in admins:
             if admin['user_id'] != user_id:  # Не можна видалити себе
-                keyboard.append([InlineButton(
+                keyboard.append([InlineKeyboardButton(
                     f"❌ {admin['user_id']} - @{admin['username']}", 
                     callback_data=f"remove_admin_{admin['user_id']}"
                 )])
-        keyboard.append([InlineButton("🔙 Назад", callback_data="admin_manage_admins")])
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_manage_admins")])
         
         await query.edit_message_text(
             "🗑 Видалення адміністратора\n\n"
@@ -1845,7 +1854,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             text = "❌ Помилка при видаленні адміна"
         
-        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_manage_admins")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_manage_admins")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     # ===== СТАТИСТИКА =====
@@ -1858,7 +1867,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n"
         text += f"👥 Клієнтів: {stats.get('total_users', 0)}\n"
         text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
-        text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
+        text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n"
+        text += f"⭐ Відгуків: {stats.get('total_reviews', 0)}\n\n"
         
         text += "📊 Замовлення за останні 30 днів:\n"
         text += f"   Кількість: {stats.get('last_30_days_orders', 0)}\n"
@@ -1876,7 +1886,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   📊 Активні: {segments.get('active', 0)}\n"
         text += f"   💤 Неактивні: {segments.get('inactive', 0)}\n"
         
-        keyboard = [[InlineButton("🔙 Назад", callback_data="admin_back_main")]]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_back_main")]]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     # ===== НАЛАШТУВАННЯ =====
@@ -2032,11 +2042,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             keyboard = []
             for order in orders[:10]:
-                keyboard.append([InlineButton(
+                keyboard.append([InlineKeyboardButton(
                     f"📦 №{order['order_id']}",
                     callback_data=f"order_view_{order['order_id']}"
                 )])
-            keyboard.append([InlineButton("🔙 Назад", callback_data="admin_orders")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_orders")])
             
             await update.message.reply_text(
                 response,
@@ -2069,11 +2079,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 total = sum(o['total'] for o in orders)
                 response += f"💰 Загальна сума: {total:.2f} грн"
             
-            keyboard = [[InlineButton(
+            keyboard = [[InlineKeyboardButton(
                 "👤 Переглянути профіль",
                 callback_data=f"customer_view_{user_data['user_id']}"
             )]]
-            keyboard.append([InlineButton("🔙 Назад", callback_data="admin_customers")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")])
             
             await update.message.reply_text(
                 response,
@@ -2150,7 +2160,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
             else:
                 await update.message.reply_text(
-                    "❌ Користувача з таким ID не знайдено в базі",
+                    "❌ Користувача з таким ID не знайдено в базі\n\n"
+                    "Спочатку користувач має написати основному боту /start",
                     reply_markup=get_admins_menu()
                 )
         except ValueError:
@@ -2170,7 +2181,7 @@ def main():
     # Перевіряємо підключення до БД
     conn = get_db_connection()
     if conn:
-        logger.info("✅ Підключення до бази даних успішне")
+        logger.info(f"✅ Підключення до бази даних успішне: {DB_PATH}")
         
         # Перевіряємо чи є таблиця admins
         cursor = conn.cursor()
@@ -2183,6 +2194,16 @@ def main():
             )
         ''')
         conn.commit()
+        
+        # Перевіряємо чи є дані в БД
+        cursor.execute("SELECT COUNT(*) FROM users")
+        users_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM orders")
+        orders_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM products")
+        products_count = cursor.fetchone()[0]
+        
+        logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів")
         conn.close()
     else:
         logger.warning("⚠️ Не вдалося підключитись до БД основного бота")
