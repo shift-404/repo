@@ -44,7 +44,21 @@ logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
 # ==================== ШЛЯХИ ДО ФАЙЛІВ ====================
 
 # ВАЖЛИВО: Використовуємо спільну теку Railway Volume
-DB_PATH = "/app/data/farm_bot.db"
+try:
+    # Переконуємось, що папка /app/data існує і доступна для запису
+    os.makedirs("/app/data", exist_ok=True)
+    # Перевіряємо чи можемо писати
+    test_file = "/app/data/test_write.txt"
+    with open(test_file, "w") as f:
+        f.write("test")
+    os.remove(test_file)
+    DB_PATH = "/app/data/farm_bot.db"
+    logger.info(f"✅ Спільна теку доступна: {DB_PATH}")
+except Exception as e:
+    logger.error(f"❌ Помилка доступу до /app/data: {e}")
+    # Використовуємо локальну теку як запасний варіант
+    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farm_bot.db")
+    logger.info(f"⚠️ Використовую локальну БД: {DB_PATH}")
 
 # Логи зберігаємо в локальній папці бота (вони не критичні)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -147,11 +161,17 @@ def check_single_instance():
 def init_database():
     """Инициализация базы данных"""
     try:
-        # Переконуємось, що папка /app/data існує
-        os.makedirs("/app/data", exist_ok=True)
+        # Переконуємось, що папка для БД існує
+        db_dir = os.path.dirname(DB_PATH)
+        os.makedirs(db_dir, exist_ok=True)
         
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        logger.info(f"📦 Спроба підключення до БД: {DB_PATH}")
+        conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
         cursor = conn.cursor()
+        
+        # Перевіряємо чи можемо писати
+        cursor.execute("SELECT 1")
+        logger.info("✅ Права на запис є")
         
         # Таблица користувачів
         cursor.execute('''
@@ -2073,3 +2093,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
