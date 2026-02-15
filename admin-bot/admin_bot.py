@@ -2581,8 +2581,10 @@ def main():
         if conn:
             logger.info(f"✅ Підключення до бази даних успішне: {DB_PATH}")
             
-            # Ініціалізуємо БД якщо вона порожня
-            init_database_if_empty()
+            # ВАЖЛИВО: Явно викликаємо ініціалізацію
+            logger.info("🔄 Викликаю init_database_if_empty()...")
+            init_result = init_database_if_empty()
+            logger.info(f"📊 Результат ініціалізації: {init_result}")
             
             # Перевіряємо чи є таблиця admins
             cursor = conn.cursor()
@@ -2606,8 +2608,14 @@ def main():
                 products_count = cursor.fetchone()[0]
                 
                 logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів")
+                
+                # Якщо товарів немає, але БД існує - проблема!
+                if products_count == 0:
+                    logger.warning("⚠️ Товарів не знайдено! Можливо, БД пошкоджена?")
+                    
             except Exception as e:
                 logger.error(f"❌ Помилка отримання статистики: {e}")
+                logger.error(traceback.format_exc())
             
             conn.close()
         else:
@@ -2630,7 +2638,7 @@ def main():
         logger.error(f"❌ Критична помилка: {e}")
         logger.error(traceback.format_exc())
         time.sleep(5)
-        # Не виходимо, даємо можливість Railway перезапустити
 
 if __name__ == "__main__":
     main()
+
