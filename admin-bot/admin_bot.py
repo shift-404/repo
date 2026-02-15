@@ -2174,6 +2174,181 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== ОСНОВНА ФУНКЦІЯ ====================
 
+def init_database_if_empty():
+    """Ініціалізує базу даних, якщо вона порожня"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Перевіряємо чи є таблиці
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        if cursor.fetchone():
+            logger.info("✅ Таблиці вже існують")
+            return True
+        
+        logger.info("🔄 База даних порожня, створюємо таблиці...")
+        
+        # Таблица користувачів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                first_name TEXT,
+                last_name TEXT,
+                username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица сесій
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                user_id INTEGER PRIMARY KEY,
+                state TEXT DEFAULT '',
+                temp_data TEXT DEFAULT '{}',
+                last_section TEXT DEFAULT 'main_menu',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица кошиків
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS carts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                product_id INTEGER,
+                quantity REAL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                user_name TEXT,
+                username TEXT,
+                phone TEXT,
+                city TEXT,
+                np_department TEXT,
+                total REAL,
+                status TEXT DEFAULT 'нове',
+                order_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица елементів замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER,
+                product_name TEXT,
+                quantity REAL,
+                price_per_unit REAL
+            )
+        ''')
+        
+        # Таблица повідомлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                user_name TEXT,
+                username TEXT,
+                text TEXT,
+                message_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица швидких замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS quick_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                user_name TEXT,
+                username TEXT,
+                phone TEXT,
+                product_id INTEGER,
+                product_name TEXT,
+                quantity REAL,
+                contact_method TEXT,
+                status TEXT DEFAULT 'нове',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица товарів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                category TEXT,
+                description TEXT,
+                unit TEXT DEFAULT 'банка',
+                image TEXT DEFAULT '🥫',
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица відгуків
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                user_name TEXT,
+                order_id INTEGER,
+                text TEXT,
+                rating INTEGER DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблица адмінів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Додаємо базові товари
+        products = [
+            (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
+             "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+             "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+            
+            (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
+             "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+             "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+            
+            (3, "Паштет з артишоку", 290, "паштети",
+             "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
+             "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+        ]
+        
+        cursor.executemany('''
+            INSERT OR IGNORE INTO products (id, name, price, category, description, unit, image, details)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', products)
+        
+        conn.commit()
+        logger.info("✅ Таблиці успішно створено!")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Помилка створення таблиць: {e}")
+        return False
+    finally:
+        conn.close()
+
 def main():
     """Запуск адмін-бота"""
     logger.info("🚀 Запуск адмін-бота Бонелет...")
@@ -2182,6 +2357,9 @@ def main():
     conn = get_db_connection()
     if conn:
         logger.info(f"✅ Підключення до бази даних успішне: {DB_PATH}")
+        
+        # Ініціалізуємо БД якщо вона порожня
+        init_database_if_empty()
         
         # Перевіряємо чи є таблиця admins
         cursor = conn.cursor()
@@ -2196,17 +2374,23 @@ def main():
         conn.commit()
         
         # Перевіряємо чи є дані в БД
-        cursor.execute("SELECT COUNT(*) FROM users")
-        users_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM orders")
-        orders_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM products")
-        products_count = cursor.fetchone()[0]
+        try:
+            cursor.execute("SELECT COUNT(*) FROM users")
+            users_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM orders")
+            orders_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM products")
+            products_count = cursor.fetchone()[0]
+            
+            logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів")
+        except Exception as e:
+            logger.error(f"❌ Помилка отримання статистики: {e}")
         
-        logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів")
         conn.close()
     else:
         logger.warning("⚠️ Не вдалося підключитись до БД основного бота")
+        # Створюємо БД якщо її немає
+        init_database_if_empty()
     
     # Створюємо додаток
     application = Application.builder().token(TOKEN).build()
@@ -2219,5 +2403,3 @@ def main():
     logger.info("✅ Адмін-бот готовий до роботи")
     application.run_polling(drop_pending_updates=True)
 
-if __name__ == "__main__":
-    main()
