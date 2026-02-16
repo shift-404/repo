@@ -1,10 +1,11 @@
 import os
 import json
-import sqlite3
 import re
 import logging
 import sys
 import time
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
@@ -22,7 +23,6 @@ from telegram.ext import (
 
 # ==================== НАСТРОЙКА ЛОГГИРОВАНИЯ ====================
 
-# СНАЧАЛА создаем логгер
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -41,26 +41,200 @@ if not TOKEN:
 
 logger.info(f"✅ Токен получен: {TOKEN[:4]}...{TOKEN[-4:]}")
 
-# ==================== ШЛЯХИ ДО ФАЙЛІВ ====================
+# ==================== ПІДКЛЮЧЕННЯ ДО POSTGRESQL ====================
 
-# ВАЖЛИВО: Використовуємо спільну теку Railway Volume
-try:
-    # Переконуємось, що папка /app/data існує і доступна для запису
-    os.makedirs("/app/data", exist_ok=True)
-    # Перевіряємо чи можемо писати
-    test_file = "/app/data/test_write.txt"
-    with open(test_file, "w") as f:
-        f.write("test")
-    os.remove(test_file)
-    DB_PATH = "/app/data/farm_bot.db"
-    logger.info(f"✅ Спільна теку доступна: {DB_PATH}")
-except Exception as e:
-    logger.error(f"❌ Помилка доступу до /app/data: {e}")
-    # Використовуємо локальну теку як запасний варіант
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "farm_bot.db")
-    logger.info(f"⚠️ Використовую локальну БД: {DB_PATH}")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    logger.error("❌ DATABASE_URL не знайдено! Додайте змінну середовища")
+    exit(1)
 
-# Логи зберігаємо в локальній папці бота (вони не критичні)
+def get_db_connection():
+    """Підключення до PostgreSQL"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        logger.error(f"❌ Помилка підключення до БД: {e}")
+        return None
+
+# ==================== ІНІЦІАЛІЗАЦІЯ БАЗИ ДАНИХ ====================
+
+def init_database():
+    """Створення таблиць в PostgreSQL"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Таблиця користувачів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                first_name TEXT,
+                last_name TEXT,
+                username TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця сесій
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_sessions (
+                user_id BIGINT PRIMARY KEY,
+                state TEXT DEFAULT '',
+                temp_data TEXT DEFAULT '{}',
+                last_section TEXT DEFAULT 'main_menu',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця кошиків
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS carts (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                product_id INTEGER,
+                quantity REAL,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS orders (
+                order_id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                user_name TEXT,
+                username TEXT,
+                phone TEXT,
+                city TEXT,
+                np_department TEXT,
+                total REAL,
+                status TEXT DEFAULT 'нове',
+                order_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця елементів замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS order_items (
+                id SERIAL PRIMARY KEY,
+                order_id INTEGER,
+                product_name TEXT,
+                quantity REAL,
+                price_per_unit REAL
+            )
+        ''')
+        
+        # Таблиця повідомлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                user_name TEXT,
+                username TEXT,
+                text TEXT,
+                message_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця швидких замовлень
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS quick_orders (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                user_name TEXT,
+                username TEXT,
+                phone TEXT,
+                product_id INTEGER,
+                product_name TEXT,
+                quantity REAL,
+                contact_method TEXT,
+                status TEXT DEFAULT 'нове',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця товарів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS products (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                category TEXT,
+                description TEXT,
+                unit TEXT DEFAULT 'банка',
+                image TEXT DEFAULT '🥫',
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця відгуків
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reviews (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                user_name TEXT,
+                order_id INTEGER,
+                text TEXT,
+                rating INTEGER DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Таблиця адмінів
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Перевіряємо чи є товари, якщо ні - додаємо базові
+        cursor.execute("SELECT COUNT(*) FROM products")
+        count = cursor.fetchone()['count']
+        
+        if count == 0:
+            # Додаємо базові товари
+            products = [
+                (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
+                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+                 "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                
+                (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
+                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
+                 "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                
+                (3, "Паштет з артишоку", 290, "паштети",
+                 "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
+                 "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+            ]
+            
+            for product in products:
+                cursor.execute('''
+                    INSERT INTO products (id, name, price, category, description, unit, image, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                ''', product)
+        
+        conn.commit()
+        logger.info("✅ База даних PostgreSQL ініціалізована")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Помилка ініціалізації бази даних: {e}")
+        return False
+    finally:
+        conn.close()
+
+# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -156,203 +330,32 @@ def check_single_instance():
         logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
         return True
 
-# ==================== БАЗА ДАННЫХ ====================
-
-def init_database():
-    """Инициализация базы данных"""
-    try:
-        # Переконуємось, що папка для БД існує
-        db_dir = os.path.dirname(DB_PATH)
-        os.makedirs(db_dir, exist_ok=True)
-        
-        logger.info(f"📦 Спроба підключення до БД: {DB_PATH}")
-        conn = sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
-        cursor = conn.cursor()
-        
-        # Перевіряємо чи можемо писати
-        cursor.execute("SELECT 1")
-        logger.info("✅ Права на запис є")
-        
-        # Таблица користувачів
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                first_name TEXT,
-                last_name TEXT,
-                username TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица сесій
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                user_id INTEGER PRIMARY KEY,
-                state TEXT DEFAULT '',
-                temp_data TEXT DEFAULT '{}',
-                last_section TEXT DEFAULT 'main_menu',
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица кошиків
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS carts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                product_id INTEGER,
-                quantity REAL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица замовлень
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
-                order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                user_name TEXT,
-                username TEXT,
-                phone TEXT,
-                city TEXT,
-                np_department TEXT,
-                total REAL,
-                status TEXT DEFAULT 'нове',
-                order_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица елементів замовлень
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS order_items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id INTEGER,
-                product_name TEXT,
-                quantity REAL,
-                price_per_unit REAL
-            )
-        ''')
-        
-        # Таблица повідомлень
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                user_name TEXT,
-                username TEXT,
-                text TEXT,
-                message_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица швидких замовлень
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS quick_orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                user_name TEXT,
-                username TEXT,
-                phone TEXT,
-                product_id INTEGER,
-                product_name TEXT,
-                quantity REAL,
-                contact_method TEXT,
-                status TEXT DEFAULT 'нове',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица товарів
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                price REAL NOT NULL,
-                category TEXT,
-                description TEXT,
-                unit TEXT DEFAULT 'банка',
-                image TEXT DEFAULT '🥫',
-                details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица відгуків
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                user_name TEXT,
-                order_id INTEGER,
-                text TEXT,
-                rating INTEGER DEFAULT 5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Таблица адмінів
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS admins (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                added_by INTEGER,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Перевіряємо чи є товари, якщо ні - додаємо базові
-        cursor.execute("SELECT COUNT(*) FROM products")
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            # Додаємо базові товари
-            products = [
-                (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
-                
-                (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
-                
-                (3, "Паштет з артишоку", 290, "паштети",
-                 "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
-            ]
-            
-            cursor.executemany('''
-                INSERT INTO products (id, name, price, category, description, unit, image, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', products)
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"✅ База данных инициализирована: {DB_PATH}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Ошибка инициализации базы данных: {e}")
-        return False
+# ==================== КЛАС DATABASE (ПЕРЕРОБЛЕНИЙ ПІД POSTGRESQL) ====================
 
 class Database:
-    """Клас для роботи з базою даних"""
+    """Клас для роботи з PostgreSQL"""
     
     @staticmethod
     def get_connection():
         """Повертає з'єднання з базою даних"""
-        return sqlite3.connect(DB_PATH, timeout=20, check_same_thread=False)
+        return get_db_connection()
     
     @staticmethod
     def save_user(user_id: int, first_name: str = "", last_name: str = "", username: str = ""):
         """Зберігає або оновлює користувача"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, first_name, last_name, username)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO users (user_id, first_name, last_name, username)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    username = EXCLUDED.username
             ''', (user_id, first_name, last_name, username))
             
             conn.commit()
@@ -365,19 +368,21 @@ class Database:
     def get_user_session(user_id: int) -> Dict:
         """Отримує сесію користувача"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return {"state": "", "temp_data": {}, "last_section": "main_menu"}
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
                 SELECT state, temp_data, last_section 
                 FROM user_sessions 
-                WHERE user_id = ?
+                WHERE user_id = %s
             ''', (user_id,))
             
             row = cursor.fetchone()
             
             if row:
-                state, temp_data_json, last_section = row
+                state, temp_data_json, last_section = row['state'], row['temp_data'], row['last_section']
                 temp_data = json.loads(temp_data_json) if temp_data_json else {}
                 return {
                     "state": state,
@@ -395,14 +400,20 @@ class Database:
     def save_user_session(user_id: int, state: str = "", temp_data: Dict = None, last_section: str = ""):
         """Зберігає сесію користувача"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
             temp_data_json = json.dumps(temp_data) if temp_data else "{}"
-            
+            cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR REPLACE INTO user_sessions (user_id, state, temp_data, last_section, updated_at)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO user_sessions (user_id, state, temp_data, last_section, updated_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    state = EXCLUDED.state,
+                    temp_data = EXCLUDED.temp_data,
+                    last_section = EXCLUDED.last_section,
+                    updated_at = CURRENT_TIMESTAMP
             ''', (user_id, state, temp_data_json, last_section))
             
             conn.commit()
@@ -415,10 +426,12 @@ class Database:
     def clear_user_session(user_id: int):
         """Очищає сесію користувача"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
-            cursor.execute('DELETE FROM user_sessions WHERE user_id = ?', (user_id,))
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_sessions WHERE user_id = %s', (user_id,))
             conn.commit()
         except Exception as e:
             logger.error(f"❌ Ошибка очистки сессии: {e}")
@@ -429,28 +442,30 @@ class Database:
     def add_to_cart(user_id: int, product_id: int, quantity: float) -> bool:
         """Додає товар до кошика"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
+            cursor = conn.cursor()
             # Проверяем, есть ли уже товар в корзине
             cursor.execute('''
                 SELECT id, quantity FROM carts 
-                WHERE user_id = ? AND product_id = ?
+                WHERE user_id = %s AND product_id = %s
             ''', (user_id, product_id))
             
             existing = cursor.fetchone()
             
             if existing:
-                cart_id, old_quantity = existing
+                cart_id, old_quantity = existing['id'], existing['quantity']
                 new_quantity = old_quantity + quantity
                 cursor.execute('''
-                    UPDATE carts SET quantity = ?, added_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
+                    UPDATE carts SET quantity = %s, added_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
                 ''', (new_quantity, cart_id))
             else:
                 cursor.execute('''
                     INSERT INTO carts (user_id, product_id, quantity)
-                    VALUES (?, ?, ?)
+                    VALUES (%s, %s, %s)
                 ''', (user_id, product_id, quantity))
             
             conn.commit()
@@ -465,15 +480,17 @@ class Database:
     def get_cart_items(user_id: int) -> List[Dict]:
         """Отримує товари з кошика"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return []
         
         try:
-            cursor.execute('SELECT id, product_id, quantity FROM carts WHERE user_id = ?', (user_id,))
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, product_id, quantity FROM carts WHERE user_id = %s', (user_id,))
             rows = cursor.fetchall()
             
             items = []
             for row in rows:
-                cart_id, product_id, quantity = row
+                cart_id, product_id, quantity = row['id'], row['product_id'], row['quantity']
                 product = Database.get_product_by_id(product_id)
                 if product:
                     items.append({
@@ -493,10 +510,12 @@ class Database:
     def clear_cart(user_id: int):
         """Очищає кошик"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
-            cursor.execute('DELETE FROM carts WHERE user_id = ?', (user_id,))
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM carts WHERE user_id = %s', (user_id,))
             conn.commit()
         except Exception as e:
             logger.error(f"❌ Ошибка очистки корзины: {e}")
@@ -507,10 +526,12 @@ class Database:
     def remove_from_cart(cart_id: int):
         """Видаляє товар з кошика"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
-            cursor.execute('DELETE FROM carts WHERE id = ?', (cart_id,))
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM carts WHERE id = %s', (cart_id,))
             conn.commit()
         except Exception as e:
             logger.error(f"❌ Ошибка удаления из корзины: {e}")
@@ -521,15 +542,16 @@ class Database:
     def create_order(order_data: Dict) -> int:
         """Створює замовлення"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return 0
         
         try:
-            # Используем транзакцию для избежания блокировок
-            cursor.execute('BEGIN TRANSACTION')
+            cursor = conn.cursor()
             
             cursor.execute('''
                 INSERT INTO orders (user_id, user_name, username, phone, city, np_department, total, order_type, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING order_id
             ''', (
                 order_data.get("user_id"),
                 order_data.get("user_name"),
@@ -542,13 +564,14 @@ class Database:
                 "нове"
             ))
             
-            order_id = cursor.lastrowid
+            result = cursor.fetchone()
+            order_id = result['order_id'] if result else 0
             
             # Добавляем товары в заказ
             for item in order_data.get("items", []):
                 cursor.execute('''
                     INSERT INTO order_items (order_id, product_name, quantity, price_per_unit)
-                    VALUES (?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s)
                 ''', (
                     order_id,
                     item.get("product_name"),
@@ -557,14 +580,13 @@ class Database:
                 ))
             
             # Очищаем корзину
-            cursor.execute('DELETE FROM carts WHERE user_id = ?', (order_data.get("user_id"),))
+            cursor.execute('DELETE FROM carts WHERE user_id = %s', (order_data.get("user_id"),))
             
             conn.commit()
             logger.info(f"✅ Заказ #{order_id} создан успешно")
             return order_id
         except Exception as e:
             logger.error(f"❌ Ошибка создания заказа: {e}")
-            conn.rollback()
             return 0
         finally:
             conn.close()
@@ -573,12 +595,14 @@ class Database:
     def save_message(user_id: int, user_name: str, username: str, text: str, message_type: str):
         """Зберігає повідомлення"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO messages (user_id, user_name, username, text, message_type)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
             ''', (user_id, user_name, username, text, message_type))
             
             conn.commit()
@@ -593,16 +617,21 @@ class Database:
                         contact_method: str = "chat") -> int:
         """Зберігає швидке замовлення"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return 0
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO quick_orders (user_id, user_name, username, product_id, product_name, 
                                         quantity, phone, contact_method, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
             ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method, "нове"))
             
-            order_id = cursor.lastrowid
+            result = cursor.fetchone()
+            order_id = result['id'] if result else 0
+            
             conn.commit()
             logger.info(f"✅ Быстрый заказ #{order_id} сохранен")
             return order_id
@@ -616,12 +645,14 @@ class Database:
     def save_review(user_id: int, user_name: str, order_id: int, text: str, rating: int = 5):
         """Зберігає відгук"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO reviews (user_id, user_name, order_id, text, rating)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
             ''', (user_id, user_name, order_id, text, rating))
             
             conn.commit()
@@ -636,29 +667,32 @@ class Database:
     def get_statistics() -> Dict:
         """Повертає статистику"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return {}
         
         try:
-            cursor.execute('SELECT COUNT(*) FROM orders')
-            total_orders = cursor.fetchone()[0]
+            cursor = conn.cursor()
             
-            cursor.execute('SELECT COUNT(*) FROM messages')
-            total_messages = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM orders")
+            total_orders = cursor.fetchone()['count']
             
-            cursor.execute('SELECT COUNT(DISTINCT user_id) FROM users')
-            total_users = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM messages")
+            total_messages = cursor.fetchone()['count']
             
-            cursor.execute('SELECT COUNT(DISTINCT user_id) FROM carts')
-            active_carts = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM users")
+            total_users = cursor.fetchone()['count']
             
-            cursor.execute('SELECT COUNT(*) FROM quick_orders')
-            quick_orders = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM carts")
+            active_carts = cursor.fetchone()['count']
             
-            cursor.execute('SELECT SUM(total) FROM orders')
-            total_revenue = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT COUNT(*) FROM quick_orders")
+            quick_orders = cursor.fetchone()['count']
             
-            cursor.execute('SELECT COUNT(*) FROM reviews')
-            total_reviews = cursor.fetchone()[0]
+            cursor.execute("SELECT SUM(total) FROM orders")
+            total_revenue = cursor.fetchone()['sum'] or 0
+            
+            cursor.execute("SELECT COUNT(*) FROM reviews")
+            total_reviews = cursor.fetchone()['count']
             
             return {
                 "total_orders": total_orders,
@@ -679,23 +713,25 @@ class Database:
     def get_all_products():
         """Отримує всі товари з БД"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return []
         
         try:
+            cursor = conn.cursor()
             cursor.execute('SELECT * FROM products ORDER BY id')
             rows = cursor.fetchall()
             
             products = []
             for row in rows:
                 products.append({
-                    "id": row[0],
-                    "name": row[1],
-                    "price": row[2],
-                    "category": row[3],
-                    "description": row[4],
-                    "unit": row[5],
-                    "image": row[6],
-                    "details": row[7]
+                    "id": row['id'],
+                    "name": row['name'],
+                    "price": row['price'],
+                    "category": row['category'],
+                    "description": row['description'],
+                    "unit": row['unit'],
+                    "image": row['image'],
+                    "details": row['details']
                 })
             return products
         except Exception as e:
@@ -714,18 +750,72 @@ class Database:
         return None
     
     @staticmethod
-    def get_order_status(order_id: int) -> str:
-        """Отримує статус замовлення"""
+    def update_product(product_id: int, **kwargs):
+        """Оновлює товар"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
-            cursor.execute('SELECT status FROM orders WHERE order_id = ?', (order_id,))
-            row = cursor.fetchone()
-            return row[0] if row else "невідомо"
+            cursor = conn.cursor()
+            fields = []
+            values = []
+            for key, value in kwargs.items():
+                fields.append(f"{key} = %s")
+                values.append(value)
+            
+            values.append(product_id)
+            query = f"UPDATE products SET {', '.join(fields)} WHERE id = %s"
+            cursor.execute(query, values)
+            conn.commit()
+            return True
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статуса: {e}")
-            return "невідомо"
+            logger.error(f"❌ Ошибка обновления товара: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
+        """Додає новий товар"""
+        conn = Database.get_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO products (name, price, category, description, unit, image, details)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (name, price, category, description, unit, image, details))
+            
+            result = cursor.fetchone()
+            product_id = result['id'] if result else None
+            
+            conn.commit()
+            return product_id
+        except Exception as e:
+            logger.error(f"❌ Ошибка добавления товара: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def delete_product(product_id: int):
+        """Видаляє товар"""
+        conn = Database.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM products WHERE id = %s', (product_id,))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка удаления товара: {e}")
+            return False
         finally:
             conn.close()
     
@@ -733,11 +823,13 @@ class Database:
     def get_all_orders():
         """Отримує всі замовлення"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return []
         
         try:
+            cursor = conn.cursor()
             cursor.execute('SELECT * FROM orders ORDER BY created_at DESC')
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.fetchall()
         except Exception as e:
             logger.error(f"❌ Ошибка получения заказов: {e}")
             return []
@@ -748,11 +840,13 @@ class Database:
     def get_all_users():
         """Отримує всіх користувачів"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return []
         
         try:
+            cursor = conn.cursor()
             cursor.execute('SELECT * FROM users ORDER BY created_at DESC')
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.fetchall()
         except Exception as e:
             logger.error(f"❌ Ошибка получения пользователей: {e}")
             return []
@@ -763,11 +857,13 @@ class Database:
     def get_all_admins():
         """Отримує всіх адмінів"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return []
         
         try:
+            cursor = conn.cursor()
             cursor.execute('SELECT * FROM admins')
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.fetchall()
         except Exception as e:
             logger.error(f"❌ Ошибка получения админов: {e}")
             return []
@@ -778,12 +874,17 @@ class Database:
     def add_admin(user_id: int, username: str = "", added_by: int = 0):
         """Додає адміна"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
+            cursor = conn.cursor()
             cursor.execute('''
-                INSERT OR REPLACE INTO admins (user_id, username, added_by)
-                VALUES (?, ?, ?)
+                INSERT INTO admins (user_id, username, added_by)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    username = EXCLUDED.username,
+                    added_by = EXCLUDED.added_by
             ''', (user_id, username, added_by))
             conn.commit()
             return True
@@ -797,10 +898,12 @@ class Database:
     def remove_admin(user_id: int):
         """Видаляє адміна"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
-            cursor.execute('DELETE FROM admins WHERE user_id = ?', (user_id,))
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM admins WHERE user_id = %s', (user_id,))
             conn.commit()
             return True
         except Exception as e:
@@ -813,15 +916,203 @@ class Database:
     def is_admin(user_id: int) -> bool:
         """Перевіряє чи є користувач адміном"""
         conn = Database.get_connection()
-        cursor = conn.cursor()
+        if not conn:
+            return False
         
         try:
-            cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = ?', (user_id,))
-            count = cursor.fetchone()[0]
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
+            count = cursor.fetchone()['count']
             return count > 0
         except Exception as e:
             logger.error(f"❌ Ошибка проверки админа: {e}")
             return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_order_by_id(order_id: int):
+        """Отримує замовлення за ID"""
+        conn = Database.get_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM orders WHERE order_id = %s', (order_id,))
+            order = cursor.fetchone()
+            
+            if order:
+                cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order_id,))
+                items = cursor.fetchall()
+                order['items'] = items
+            
+            return order
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения заказа: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_orders_by_phone(phone: str):
+        """Отримує замовлення за номером телефону"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM orders 
+                WHERE phone LIKE %s 
+                ORDER BY created_at DESC
+            ''', (f"%{phone}%",))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения заказов по телефону: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_new_orders():
+        """Отримує нові замовлення"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM orders 
+                WHERE status = 'нове'
+                ORDER BY created_at DESC
+            ''')
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения новых заказов: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_quick_orders():
+        """Отримує швидкі замовлення"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM quick_orders 
+                ORDER BY created_at DESC
+            ''')
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения быстрых заказов: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def update_order_status(order_id: int, status: str):
+        """Оновлює статус замовлення"""
+        conn = Database.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE orders SET status = %s WHERE order_id = %s
+            ''', (status, order_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"❌ Ошибка обновления статуса: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_by_id(user_id: int):
+        """Отримує користувача за ID"""
+        conn = Database.get_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
+            return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения пользователя: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_orders(user_id: int):
+        """Отримує замовлення користувача"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM orders 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения заказов пользователя: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_messages(user_id: int):
+        """Отримує повідомлення користувача"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM messages 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC LIMIT 10
+            ''', (user_id,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения сообщений: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_quick_orders(user_id: int):
+        """Отримує швидкі замовлення користувача"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM quick_orders 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения быстрых заказов: {e}")
+            return []
         finally:
             conn.close()
 
@@ -2026,9 +2317,6 @@ def main():
         # Добавляем задержку для предотвращения конфликтов при перезапуске
         time.sleep(2)
         
-        # Переконуємось, що папка для БД існує
-        os.makedirs("/app/data", exist_ok=True)
-        
         # Инициализируем базу данных
         if not init_database():
             logger.error("❌ Не удалось инициализировать базу данных")
@@ -2052,7 +2340,6 @@ def main():
         logger.info(f"• Продуктів у базі: {len(PRODUCTS)}")
         logger.info(f"• Виручка: {stats.get('total_revenue', 0):.2f} грн")
         logger.info(f"• Відгуків: {stats.get('total_reviews', 0)}")
-        logger.info(f"• Шлях до БД: {DB_PATH}")
         logger.info("=" * 80)
         logger.info("🔄 Очікування повідомлень...\n")
         
@@ -2093,4 +2380,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
