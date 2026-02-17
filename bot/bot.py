@@ -330,7 +330,7 @@ def check_single_instance():
         logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
         return True
 
-# ==================== КЛАС DATABASE (ПЕРЕРОБЛЕНИЙ ПІД POSTGRESQL) ====================
+# ==================== КЛАС DATABASE ====================
 
 class Database:
     """Клас для роботи з PostgreSQL"""
@@ -750,6 +750,27 @@ class Database:
         return None
     
     @staticmethod
+    def get_user_orders(user_id: int) -> List[Dict]:
+        """Отримує замовлення користувача"""
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM orders 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"❌ Ошибка получения заказов пользователя: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
     def update_product(product_id: int, **kwargs):
         """Оновлює товар"""
         conn = Database.get_connection()
@@ -854,264 +875,21 @@ class Database:
             conn.close()
     
     @staticmethod
-    def get_all_admins():
-        """Отримує всіх адмінів"""
+    def get_all_reviews(limit: int = None):
+        """Отримує всі відгуки"""
         conn = Database.get_connection()
         if not conn:
             return []
         
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM admins')
+            if limit:
+                cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC LIMIT %s', (limit,))
+            else:
+                cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC')
             return cursor.fetchall()
         except Exception as e:
-            logger.error(f"❌ Ошибка получения админов: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def add_admin(user_id: int, username: str = "", added_by: int = 0):
-        """Додає адміна"""
-        conn = Database.get_connection()
-        if not conn:
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO admins (user_id, username, added_by)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    added_by = EXCLUDED.added_by
-            ''', (user_id, username, added_by))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка добавления админа: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def remove_admin(user_id: int):
-        """Видаляє адміна"""
-        conn = Database.get_connection()
-        if not conn:
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM admins WHERE user_id = %s', (user_id,))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка удаления админа: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def is_admin(user_id: int) -> bool:
-        """Перевіряє чи є користувач адміном"""
-        conn = Database.get_connection()
-        if not conn:
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
-            count = cursor.fetchone()['count']
-            return count > 0
-        except Exception as e:
-            logger.error(f"❌ Ошибка проверки админа: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_order_by_id(order_id: int):
-        """Отримує замовлення за ID"""
-        conn = Database.get_connection()
-        if not conn:
-            return None
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM orders WHERE order_id = %s', (order_id,))
-            order = cursor.fetchone()
-            
-            if order:
-                cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order_id,))
-                items = cursor.fetchall()
-                order['items'] = items
-            
-            return order
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения заказа: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_orders_by_phone(phone: str):
-        """Отримує замовлення за номером телефону"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM orders 
-                WHERE phone LIKE %s 
-                ORDER BY created_at DESC
-            ''', (f"%{phone}%",))
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения заказов по телефону: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_new_orders():
-        """Отримує нові замовлення"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM orders 
-                WHERE status = 'нове'
-                ORDER BY created_at DESC
-            ''')
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения новых заказов: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_quick_orders():
-        """Отримує швидкі замовлення"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM quick_orders 
-                ORDER BY created_at DESC
-            ''')
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения быстрых заказов: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def update_order_status(order_id: int, status: str):
-        """Оновлює статус замовлення"""
-        conn = Database.get_connection()
-        if not conn:
-            return False
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE orders SET status = %s WHERE order_id = %s
-            ''', (status, order_id))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка обновления статуса: {e}")
-            return False
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_user_by_id(user_id: int):
-        """Отримує користувача за ID"""
-        conn = Database.get_connection()
-        if not conn:
-            return None
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-            return cursor.fetchone()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения пользователя: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_user_orders(user_id: int):
-        """Отримує замовлення користувача"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM orders 
-                WHERE user_id = %s 
-                ORDER BY created_at DESC
-            ''', (user_id,))
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения заказов пользователя: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_user_messages(user_id: int):
-        """Отримує повідомлення користувача"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM messages 
-                WHERE user_id = %s 
-                ORDER BY created_at DESC LIMIT 10
-            ''', (user_id,))
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения сообщений: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def get_user_quick_orders(user_id: int):
-        """Отримує швидкі замовлення користувача"""
-        conn = Database.get_connection()
-        if not conn:
-            return []
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM quick_orders 
-                WHERE user_id = %s 
-                ORDER BY created_at DESC
-            ''', (user_id,))
-            return cursor.fetchall()
-        except Exception as e:
-            logger.error(f"❌ Ошибка получения быстрых заказов: {e}")
+            logger.error(f"❌ Ошибка получения отзывов: {e}")
             return []
         finally:
             conn.close()
@@ -1208,7 +986,7 @@ def get_main_menu() -> InlineKeyboardMarkup:
         [{"text": "❓ Часті запитання", "callback_data": "faq"}],
         [
             {"text": "🛒 Моя корзина", "callback_data": "cart"}, 
-            {"text": "⭐ Мій відгук", "callback_data": "my_review"}
+            {"text": "📋 Мої замовлення", "callback_data": "my_orders"}
         ],
         [{"text": "📞 Зв'язатися з нами", "callback_data": "contact"}]
     ]
@@ -1221,7 +999,7 @@ def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
 
 def get_products_menu() -> InlineKeyboardMarkup:
     """Меню продуктів"""
-    refresh_products()  # Оновлюємо товари перед показом
+    refresh_products()
     buttons = []
     
     for product in PRODUCTS:
@@ -1271,7 +1049,6 @@ def get_contact_menu() -> InlineKeyboardMarkup:
         [{"text": "📧 Написати email", "callback_data": "email_us"}],
         [{"text": "📍 Наша адреса", "callback_data": "our_address"}],
         [{"text": "💬 Написати нам тут", "callback_data": "write_here"}],
-        [{"text": "⭐ Залишити відгук", "callback_data": "leave_review"}],
         [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
     ]
     return create_inline_keyboard(buttons)
@@ -1305,16 +1082,15 @@ def get_order_confirmation_keyboard() -> InlineKeyboardMarkup:
     ]
     return create_inline_keyboard(buttons)
 
-def get_review_keyboard() -> InlineKeyboardMarkup:
-    """Клавіатура для відгуку"""
-    buttons = [
-        [{"text": "⭐ 5 зірок", "callback_data": "review_5"}],
-        [{"text": "⭐ 4 зірки", "callback_data": "review_4"}],
-        [{"text": "⭐ 3 зірки", "callback_data": "review_3"}],
-        [{"text": "⭐ 2 зірки", "callback_data": "review_2"}],
-        [{"text": "⭐ 1 зірка", "callback_data": "review_1"}],
-        [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
-    ]
+def get_my_orders_menu(orders: List) -> InlineKeyboardMarkup:
+    """Меню замовлень користувача"""
+    buttons = []
+    for order in orders[:5]:
+        buttons.append([{
+            "text": f"№{order['order_id']} - {order['created_at'][:16]} - {order['total']} грн",
+            "callback_data": f"user_order_{order['order_id']}"
+        }])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
 
 # ==================== УТІЛІТИ ДЛЯ ВАЛІДАЦІЇ ====================
@@ -1404,7 +1180,7 @@ def get_company_text() -> str:
 
 def get_product_text(product_id: int) -> str:
     """Текст продукту"""
-    refresh_products()  # Оновлюємо товари
+    refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
     if not product:
         return "❌ Продукт не знайдено"
@@ -1474,8 +1250,6 @@ def get_contact_text() -> str:
 • <b>Адреса</b> - для самовивозу
 • <b>Написати тут</b> - швидке повідомлення в чаті
 
-<b>⭐ Залишити відгук</b> - поділіться враженнями про наші продукти
-
 <i>Просто напишіть нам повідомлення в цьому чаті 👇</i>
     """
 
@@ -1512,22 +1286,35 @@ def get_cart_text(cart_items: List[Dict]) -> str:
     
     return text
 
-def get_review_text() -> str:
-    """Текст для відгуку"""
-    return """
-⭐ <b>Залишити відгук</b>
+def get_my_orders_text(orders: List[Dict]) -> str:
+    """Текст для списку замовлень користувача"""
+    if not orders:
+        return "📋 <b>У вас ще немає замовлень</b>\n\nЗробіть перше замовлення в розділі 'Наші продукти'!"
+    
+    text = "📋 <b>Мої замовлення</b>\n\n"
+    for order in orders:
+        text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+        text += f"Сума: {order['total']:.2f} грн | Статус: {order['status']}\n"
+        text += f"{'─'*40}\n"
+    
+    return text
 
-Ми будемо дуже вдячні, якщо ви поділитесь своїми враженнями про наші продукти!
-
-<b>Оберіть оцінку:</b>
-• 5 ⭐ - Чудово
-• 4 ⭐ - Добре
-• 3 ⭐ - Нормально
-• 2 ⭐ - Погано
-• 1 ⭐ - Жахливо
-
-Після вибору оцінки напишіть ваш відгук текстом.
-    """
+def get_user_order_text(order: Dict) -> str:
+    """Текст для детального перегляду замовлення"""
+    text = f"📋 <b>ЗАМОВЛЕННЯ №{order['order_id']}</b>\n\n"
+    text += f"📅 Дата: {order['created_at']}\n"
+    text += f"👤 Клієнт: {order['user_name']}\n"
+    text += f"📞 Телефон: {order['phone']}\n"
+    text += f"🏙️ Місто: {order['city']}\n"
+    text += f"🏣 Відділення: {order['np_department']}\n"
+    text += f"{'─'*40}\n"
+    text += "📦 Товари:\n"
+    # Тут мають бути товари, але в спрощеній версії пропустимо
+    text += f"{'─'*40}\n"
+    text += f"💰 Сума: {order['total']:.2f} грн\n"
+    text += f"📊 Статус: {order['status']}\n"
+    
+    return text
 
 # ==================== TELEGRAM HANDLERS ====================
 
@@ -1634,12 +1421,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="cart")
             
+            elif back_target == "my_orders":
+                orders = Database.get_user_orders(user_id)
+                text = get_my_orders_text(orders)
+                await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="my_orders")
+            
             else:
                 welcome = get_welcome_text()
                 await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="main_menu")
         
-        # Головное меню
+        # Головне меню
         elif data == "company":
             company_text = get_company_text()
             await query.edit_message_text(company_text, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
@@ -1763,6 +1556,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="cart")
         
+        elif data == "my_orders":
+            orders = Database.get_user_orders(user_id)
+            text = get_my_orders_text(orders)
+            await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="my_orders")
+        
+        elif data.startswith("user_order_"):
+            order_id = int(data.split("_")[2])
+            # Тут має бути отримання конкретного замовлення
+            # В спрощеній версії повертаємо заглушку
+            await query.edit_message_text(
+                f"📋 Деталі замовлення #{order_id} (в розробці)",
+                reply_markup=get_back_keyboard("my_orders")
+            )
+        
         elif data.startswith("remove_from_cart_"):
             cart_id = int(data.split("_")[3])
             Database.remove_from_cart(cart_id)
@@ -1804,38 +1612,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
-        
-        elif data == "my_review":
-            review_text = get_review_text()
-            await query.edit_message_text(review_text, reply_markup=get_review_keyboard(), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="review")
-        
-        elif data.startswith("review_"):
-            if data == "review_5":
-                rating = 5
-            elif data == "review_4":
-                rating = 4
-            elif data == "review_3":
-                rating = 3
-            elif data == "review_2":
-                rating = 2
-            elif data == "review_1":
-                rating = 1
-            else:
-                rating = 5
-            
-            Database.save_user_session(user_id, f"waiting_review_text", {"rating": rating})
-            
-            await query.edit_message_text(
-                f"⭐ <b>Ваша оцінка: {rating} зірок</b>\n\n"
-                f"Напишіть текст вашого відгуку:",
-                parse_mode='HTML'
-            )
-        
-        elif data == "leave_review":
-            review_text = get_review_text()
-            await query.edit_message_text(review_text, reply_markup=get_review_keyboard(), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="review")
         
         elif data == "contact":
             contact_text = get_contact_text()
@@ -1915,8 +1691,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text += f"🏣 Відділення Нової Пошти: <b>{temp_data.get('np_department', '')}</b>\n"
                         text += f"💰 Сума: <b>{temp_data.get('total', 0):.2f} грн</b>\n\n"
                         text += "📞 <b>Ми зв'яжемось з вами для підтвердження!</b>\n\n"
-                        text += "<i>Дякуємо за замовлення! 🌱</i>\n\n"
-                        text += "⭐ Після отримання замовлення ви зможете залишити відгук у меню 'Мій відгук'"
+                        text += "<i>Дякуємо за замовлення! 🌱</i>"
                     else:
                         text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
                         text += "Будь ласка, спробуйте ще раз або зв'яжіться з нами.\n\n"
@@ -2223,31 +1998,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<b>Ми зателефонуємо вам найближчим часом для уточнення деталей!</b>\n\n"
             response += "<i>Дякуємо за замовлення! 🌱</i>"
             
-            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="main_menu")
-        
-        elif state == "waiting_review_text":
-            rating = temp_data.get("rating", 5)
-            user_name = f"{user.first_name or ''} {user.last_name or ''}"
-            
-            # Зберігаємо відгук
-            if Database.save_review(user_id, user_name, 0, text, rating):
-                response = f"✅ <b>Дякуємо за ваш відгук!</b>\n\n"
-                response += f"⭐ Ваша оцінка: {rating}/5\n\n"
-                response += f"Ваш відгук: \"{text}\"\n\n"
-                response += "<i>Ми цінуємо вашу думку!</i>"
-                
-                # Логуємо відгук
-                logger.info(f"\n{'='*80}")
-                logger.info(f"⭐ НОВИЙ ВІДГУК:")
-                logger.info(f"👤 Клієнт: {user_name}")
-                logger.info(f"⭐ Оцінка: {rating}/5")
-                logger.info(f"💬 Текст: {text}")
-                logger.info(f"{'='*80}\n")
-            else:
-                response = "❌ <b>Помилка при збереженні відгуку</b>\n\nСпробуйте пізніше."
-            
-            Database.clear_user_session(user_id)
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
         
