@@ -815,8 +815,11 @@ def update_product(product_id: int, **kwargs):
 
 def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
     """Додає новий товар"""
+    logger.info(f"🔄 Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
+    
     conn = get_db_connection()
     if not conn:
+        logger.error("❌ Не вдалося підключитись до БД")
         return None
     
     try:
@@ -829,15 +832,17 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
         
         result = cursor.fetchone()
         product_id = result['id'] if result else None
-        
         conn.commit()
+        
+        logger.info(f"✅ Товар додано з ID: {product_id}")
         return product_id
     except Exception as e:
         logger.error(f"❌ Помилка додавання товару: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
-
+        
 def delete_product(product_id: int):
     """Видаляє товар"""
     conn = get_db_connection()
@@ -2817,3 +2822,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
