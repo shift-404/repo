@@ -1470,20 +1470,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(chat_id, response, parse_mode='HTML')
         
-        elif data.startswith("quick_order_"):
-            product_id = int(data.split("_")[2])
-            refresh_products()
-            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
-            
-            if not product:
-                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
-                return
-            
-            # Показываем меню выбора способа связи
-            quick_order_text = get_quick_order_text(product_id)
-            await query.edit_message_text(quick_order_text, reply_markup=get_quick_order_menu(product_id), parse_mode='HTML')
-        
-               elif data.startswith("quick_call_"):
+        elif data.startswith("quick_call_"):
             product_id = int(data.split("_")[2])
             refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -2153,6 +2140,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
