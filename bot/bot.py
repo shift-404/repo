@@ -1483,7 +1483,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             quick_order_text = get_quick_order_text(product_id)
             await query.edit_message_text(quick_order_text, reply_markup=get_quick_order_menu(product_id), parse_mode='HTML')
         
-        elif data.startswith("quick_call_"):
+               elif data.startswith("quick_call_"):
             product_id = int(data.split("_")[2])
             refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -1505,7 +1505,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(chat_id, response, parse_mode='HTML')
         
-         elif data.startswith("quick_chat_"):
+        elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
             refresh_products()
             product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -1562,6 +1562,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             
             Database.clear_user_session(user_id)
+        
         elif data == "faq":
             faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
             await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
@@ -2152,6 +2153,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
