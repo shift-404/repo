@@ -1505,41 +1505,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(chat_id, response, parse_mode='HTML')
         
-        elif data.startswith("quick_chat_"):
-            product_id = int(data.split("_")[2])
-            refresh_products()
-            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
-            
-            if not product:
-                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
-                return
-            
-            response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
-            response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
-            response += "💬 <b>Просто напишіть ваше повідомлення в цей чат!</b>\n\n"
-            response += "Вкажіть:\n"
-            response += "• Бажану кількість\n"
-            response += "• Контактні дані\n"
-            response += "• Бажаний час доставки\n\n"
-            response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
-            
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
-            
-            # Логируем в консоль
-            user_session = Database.get_user_session(user_id)
-            user_name = f"{user.first_name or ''} {user.last_name or ''}"
-            
-            logger.info(f"\n{'='*80}")
-            logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ (ЧАТ):")
-            logger.info(f"👤 Клієнт: {user_name}")
-            logger.info(f"📦 Продукт: {product['name']}")
-            logger.info(f"💰 Ціна: {product['price']} грн/{product['unit']}")
-            logger.info(f"🆔 User ID: {user_id}")
-            logger.info(f"💬 Контакт: Чат Telegram")
-            logger.info(f"{'='*80}\n")
-            
-            Database.clear_user_session(user_id)
-        
+       elif data.startswith("quick_chat_"):
+    product_id = int(data.split("_")[2])
+    refresh_products()
+    product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+    
+    if not product:
+        await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
+        return
+    
+    # ЗБЕРІГАЄМО ШВИДКЕ ЗАМОВЛЕННЯ В БД
+    user_name = f"{user.first_name or ''} {user.last_name or ''}"
+    username = user.username or 'немає'
+    
+    order_id = Database.save_quick_order(
+        user_id=user_id,
+        user_name=user_name,
+        username=username,
+        product_id=product_id,
+        product_name=product['name'],
+        quantity=0,
+        phone=None,
+        contact_method="chat"
+    )
+    
+    response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
+    response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
+    response += "💬 <b>Просто напишіть ваше повідомлення в цей чат!</b>\n\n"
+    response += "Вкажіть:\n"
+    response += "• Бажану кількість\n"
+    response += "• Контактні дані\n"
+    response += "• Бажаний час доставки\n\n"
+    response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
+    
+    await context.bot.send_message(chat_id, response, parse_mode='HTML')
+    
+    # Логуємо в консоль
+    logger.info(f"\n{'='*80}")
+    logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ):")
+    logger.info(f"👤 Клієнт: {user_name}")
+    logger.info(f"📦 Продукт: {product['name']}")
+    logger.info(f"💰 Ціна: {product['price']} грн/{product['unit']}")
+    logger.info(f"🆔 User ID: {user_id}")
+    logger.info(f"💬 Контакт: Чат Telegram")
+    logger.info(f"{'='*80}\n")
+    
+    log_quick_order({
+        "order_id": order_id,
+        "user_id": user_id,
+        "user_name": user_name,
+        "username": username,
+        "phone": None,
+        "product_name": product["name"],
+        "contact_method": "chat",
+        "status": "нове"
+    })
+    
+    Database.clear_user_session(user_id)
         elif data == "faq":
             faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
             await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
@@ -2130,3 +2152,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
