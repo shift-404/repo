@@ -603,6 +603,62 @@ async def send_review_request(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
         logger.error(f"Помилка відправки запиту на відгук: {e}")
         return False
 
+def get_all_reviews(limit: int = None):
+    """Отримати всі відгуки"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        if limit:
+            cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC LIMIT %s', (limit,))
+        else:
+            cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC')
+        return cursor.fetchall()
+    except Exception as e:
+        logger.error(f"❌ Помилка отримання відгуків: {e}")
+        return []
+    finally:
+        conn.close()
+
+def format_reviews_text(reviews: list) -> str:
+    """Форматує відгуки для відправки"""
+    if not reviews:
+        return "⭐ Відгуків поки немає"
+    
+    text = "⭐ <b>ВІДГУКИ КЛІЄНТІВ</b>\n\n"
+    for i, review in enumerate(reviews, 1):
+        rating_stars = "⭐" * review['rating']
+        text += f"<b>{i}. {review['user_name']}</b> {rating_stars}\n"
+        text += f"📅 {review['created_at'][:16]}\n"
+        text += f"💬 {review['text']}\n"
+        if review.get('order_id'):
+            text += f"📦 Замовлення №{review['order_id']}\n"
+        text += f"{'─'*40}\n"
+    
+    return text
+
+def generate_reviews_file(reviews: list) -> bytes:
+    """Генерує файл з відгуками"""
+    output = StringIO()
+    output.write("ВІДГУКИ КЛІЄНТІВ\n")
+    output.write("=" * 80 + "\n")
+    output.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write(f"Всього відгуків: {len(reviews)}\n")
+    output.write("=" * 80 + "\n\n")
+    
+    for i, review in enumerate(reviews, 1):
+        rating_stars = "⭐" * review['rating']
+        output.write(f"{i}. {review['user_name']} {rating_stars}\n")
+        output.write(f"Дата: {review['created_at'][:16]}\n")
+        output.write(f"Текст: {review['text']}\n")
+        if review.get('order_id'):
+            output.write(f"Замовлення: №{review['order_id']}\n")
+        output.write("-" * 40 + "\n")
+    
+    return output.getvalue().encode('utf-8')
+
 # ==================== ФУНКЦІЇ ДЛЯ СТАТИСТИКИ ====================
 
 def get_statistics():
@@ -1075,11 +1131,17 @@ def get_main_menu():
         [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
         [{"text": "📁 Звіти", "callback_data": "admin_reports"}],
         [{"text": "📢 Розсилки", "callback_data": "admin_broadcast"}],
+        [{"text": "⭐ Відгуки", "callback_data": "admin_reviews"}],
         [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
     return create_inline_keyboard(keyboard)
+
+def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
+    """Повертає кнопку 'Назад'"""
+    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_{back_to}"}]]
+    return create_inline_keyboard(buttons)
 
 def get_products_menu():
     """Меню керування товарами"""
@@ -1124,6 +1186,16 @@ def get_broadcast_menu():
         [{"text": "⭐ Постійним клієнтам", "callback_data": "broadcast_regular"}],
         [{"text": "🆕 Новим клієнтам", "callback_data": "broadcast_new"}],
         [{"text": "💤 Неактивним клієнтам", "callback_data": "broadcast_inactive"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
+    ]
+    return create_inline_keyboard(keyboard)
+
+def get_reviews_menu():
+    """Меню відгуків"""
+    keyboard = [
+        [{"text": "📋 Останні відгуки", "callback_data": "recent_reviews"}],
+        [{"text": "🔢 Вказати кількість", "callback_data": "reviews_count"}],
+        [{"text": "📁 Всі відгуки файлом", "callback_data": "reviews_all_file"}],
         [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
     return create_inline_keyboard(keyboard)
@@ -1197,6 +1269,11 @@ def get_order_status_keyboard(order_id: int):
         [{"text": "🔙 Назад", "callback_data": "admin_order_all"}]
     ]
     return create_inline_keyboard(keyboard)
+
+def get_reviews_back_keyboard() -> InlineKeyboardMarkup:
+    """Клавіатура для повернення в меню відгуків"""
+    buttons = [[{"text": "🔙 Назад до відгуків", "callback_data": "admin_reviews"}]]
+    return create_inline_keyboard(buttons)
 
 # ==================== ПЕРЕВІРКА АВТОРИЗАЦІЇ ====================
 
@@ -1330,7 +1407,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "➕ Додавання нового товару\n\n"
-                "Введіть назву товару:"
+                "Введіть назву товару:",
+                reply_markup=get_back_keyboard("admin_products")
             )
             return
         
@@ -1411,7 +1489,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             
             await query.edit_message_text(
-                f"✏️ Введіть нову {field_names.get(field, '')}:"
+                f"✏️ Введіть нову {field_names.get(field, '')}:",
+                reply_markup=get_back_keyboard(f"edit_product_{product_id}")
             )
             return
         
@@ -1568,7 +1647,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "📞 Пошук замовлень за телефоном\n\n"
-                "Введіть номер телефону клієнта:"
+                "Введіть номер телефону клієнта:",
+                reply_markup=get_back_keyboard("admin_orders")
             )
             return
         
@@ -1869,7 +1949,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "🔍 Пошук клієнта за телефоном\n\n"
-                "Введіть номер телефону:"
+                "Введіть номер телефону:",
+                reply_markup=get_back_keyboard("admin_customers")
             )
             return
         
@@ -1959,7 +2040,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "📢 Надіслати повідомлення клієнту\n\n"
-                "Введіть текст повідомлення:"
+                "Введіть текст повідомлення:",
+                reply_markup=get_back_keyboard(f"customer_view_{customer_id}")
             )
             return
         
@@ -2008,7 +2090,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 f"📢 Розсилка для сегменту: {segment}\n\n"
-                f"Введіть текст повідомлення для розсилки:"
+                f"Введіть текст повідомлення для розсилки:",
+                reply_markup=get_back_keyboard("admin_broadcast")
+            )
+            return
+        
+        # ===== ВІДГУКИ =====
+        elif data == "admin_reviews":
+            await query.edit_message_text(
+                "⭐ Керування відгуками\n\n"
+                "Оберіть дію:",
+                reply_markup=get_reviews_menu()
+            )
+            return
+        
+        elif data == "recent_reviews":
+            reviews = get_all_reviews(limit=10)
+            if not reviews:
+                text = "⭐ Відгуків поки немає"
+            else:
+                text = format_reviews_text(reviews)
+            
+            await query.edit_message_text(
+                text,
+                reply_markup=get_reviews_back_keyboard(),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "reviews_count":
+            admin_sessions[user_id] = {
+                "state": "authenticated",
+                "action": "reviews_count"
+            }
+            await query.edit_message_text(
+                "🔢 Введіть кількість останніх відгуків для перегляду:",
+                reply_markup=get_back_keyboard("admin_reviews")
+            )
+            return
+        
+        elif data == "reviews_all_file":
+            reviews = get_all_reviews()
+            if not reviews:
+                await query.edit_message_text(
+                    "⭐ Відгуків поки немає",
+                    reply_markup=get_reviews_back_keyboard()
+                )
+                return
+            
+            file_data = generate_reviews_file(reviews)
+            await query.message.reply_document(
+                document=file_data,
+                filename=f"all_reviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                caption="⭐ Всі відгуки клієнтів"
+            )
+            await query.edit_message_text(
+                "✅ Файл з відгуками згенеровано!",
+                reply_markup=get_reviews_back_keyboard()
             )
             return
         
@@ -2151,7 +2289,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "➕ Додавання адміністратора\n\n"
-                "Введіть Telegram ID користувача:"
+                "Введіть Telegram ID користувача:",
+                reply_markup=get_back_keyboard("admin_manage_admins")
             )
             return
         
@@ -2242,7 +2381,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 "🔑 Зміна пароля\n\n"
-                "Введіть новий пароль:"
+                "Введіть новий пароль:",
+                reply_markup=get_back_keyboard("admin_settings")
             )
             return
         
@@ -2291,7 +2431,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
             admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text("Введіть ціну товару (тільки число):")
+            await update.message.reply_text(
+                "Введіть ціну товару (тільки число):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_price":
@@ -2299,33 +2442,51 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price = float(text.replace(",", "."))
                 admin_sessions[user_id]["product_price"] = price
                 admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text("Введіть категорію товару:")
+                await update.message.reply_text(
+                    "Введіть категорію товару:",
+                    reply_markup=get_back_keyboard("admin_products")
+                )
             except ValueError:
-                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):")
+                await update.message.reply_text(
+                    "❌ Невірний формат. Введіть число (наприклад: 250):",
+                    reply_markup=get_back_keyboard("admin_products")
+                )
             return
         
         elif action == "add_product_category":
             admin_sessions[user_id]["product_category"] = text
             admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text("Введіть опис товару:")
+            await update.message.reply_text(
+                "Введіть опис товару:",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_description":
             admin_sessions[user_id]["product_description"] = text
             admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):")
+            await update.message.reply_text(
+                "Введіть одиницю виміру (наприклад: банка, кг, шт):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_unit":
             admin_sessions[user_id]["product_unit"] = text
             admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):")
+            await update.message.reply_text(
+                "Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_image":
             admin_sessions[user_id]["product_image"] = text
             admin_sessions[user_id]["action"] = "add_product_details"
-            await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):")
+            await update.message.reply_text(
+                "Введіть деталі товару (об'єм, вага, склад тощо):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_details":
@@ -2370,7 +2531,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     update_data["price"] = float(text.replace(",", "."))
                 except ValueError:
-                    await update.message.reply_text("❌ Невірний формат. Введіть число:")
+                    await update.message.reply_text(
+                        "❌ Невірний формат. Введіть число:",
+                        reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                    )
                     return
             elif field == "desc":
                 update_data["description"] = text
@@ -2514,6 +2678,44 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
+        # Кількість відгуків
+        elif action == "reviews_count":
+            try:
+                count = int(text)
+                if count <= 0:
+                    raise ValueError
+                
+                reviews = get_all_reviews(limit=count)
+                
+                if count > 20:
+                    # Відправляємо файлом
+                    file_data = generate_reviews_file(reviews)
+                    await update.message.reply_document(
+                        document=file_data,
+                        filename=f"reviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                        caption=f"⭐ {count} останніх відгуків"
+                    )
+                else:
+                    # Відправляємо текстом
+                    if reviews:
+                        text_response = format_reviews_text(reviews)
+                    else:
+                        text_response = "⭐ Відгуків поки немає"
+                    
+                    await update.message.reply_text(
+                        text_response,
+                        reply_markup=get_reviews_back_keyboard(),
+                        parse_mode='HTML'
+                    )
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ Введіть коректне число більше 0",
+                    reply_markup=get_reviews_back_keyboard()
+                )
+            
+            admin_sessions[user_id].pop("action", None)
+            return
+        
         # Додавання адміна
         elif action == "add_admin":
             try:
@@ -2582,8 +2784,10 @@ def main():
                 orders_count = cursor.fetchone()['count']
                 cursor.execute("SELECT COUNT(*) FROM products")
                 products_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) FROM reviews")
+                reviews_count = cursor.fetchone()['count']
                 
-                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів")
+                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {products_count} товарів, {reviews_count} відгуків")
                 
             except Exception as e:
                 logger.error(f"❌ Помилка отримання статистики: {e}")
@@ -2610,7 +2814,6 @@ def main():
         logger.error(f"❌ Критична помилка: {e}")
         logger.error(traceback.format_exc())
         time.sleep(5)
-        # Не виходимо, даємо можливість Railway перезапустити
 
 if __name__ == "__main__":
     main()
