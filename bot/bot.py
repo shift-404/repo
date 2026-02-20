@@ -8,6 +8,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+import asyncio
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -30,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # ==================== ПОЛУЧЕНИЕ ТОКЕНА ====================
 
-# ВАЖЛИВО: Використовуємо BOT_TOKEN для основного бота, а не ADMIN_BOT_TOKEN!
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ BOT_TOKEN не знайдено! Додайте BOT_TOKEN в змінні середовища")
@@ -305,7 +305,7 @@ def check_single_instance():
         logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
         return True
 
-# ==================== НОВА ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
+# ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
 
 async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_data: dict):
     """Відправляє сповіщення всім адмінам про нове замовлення"""
@@ -324,7 +324,6 @@ async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_da
             logger.warning("⚠️ Немає адмінів для сповіщення")
             return
         
-        # Формуємо повідомлення про замовлення
         items_text = ""
         for item in order_data.get('items', []):
             items_text += f"  • {item.get('product_name')} x {item.get('quantity')} = {item.get('price') * item.get('quantity'):.2f} грн\n"
@@ -340,7 +339,6 @@ async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_da
         message += f"💰 <b>Загальна сума:</b> {order_data.get('total'):.2f} грн\n\n"
         message += f"🔍 <b>Переглянути в адмін-панелі</b>"
         
-        # Відправляємо кожному адміну
         sent_count = 0
         for admin in admins:
             try:
@@ -350,7 +348,7 @@ async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_da
                     parse_mode='HTML'
                 )
                 sent_count += 1
-                await asyncio.sleep(0.1)  # Невелика затримка між повідомленнями
+                await asyncio.sleep(0.1)
             except Exception as e:
                 logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
@@ -763,6 +761,8 @@ def refresh_products():
 
 refresh_products()
 
+# ==================== ОНОВЛЕНИЙ СПИСОК FAQ (ТІЛЬКИ 2 ПИТАННЯ) ====================
+
 FAQS = [
     {
         "question": "Які способи оплати ви приймаєте?",
@@ -771,26 +771,6 @@ FAQS = [
     {
         "question": "Які терміни доставки?",
         "answer": "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів"
-    },
-    {
-        "question": "Чи є гарантія якості?",
-        "answer": "⭐ Всі продукти вирощені на Одещині\n⭐ Без штучних добавок\n⭐ Натуральне консервування\n⭐ Щоденний контроль якості"
-    },
-    {
-        "question": "Як зберігати продукти?",
-        "answer": "❄️ Мариновані артишоки - у холодильнику після відкриття\n🌡️ Паштети - у холодильнику після відкриття\n📦 Герметично закриті банки - при кімнатній температурі"
-    },
-    {
-        "question": "Чи є знижки?",
-        "answer": "🎁 При замовленні від 3 банок - знижка 5%\n🎁 Постійним клієнтам - знижка 10%\n🎁 При самовивозі з Великого Дальника - додаткова знижка 5%"
-    },
-    {
-        "question": "Чи є доставка по всій Україні?",
-        "answer": "✅ Так, доставляємо Новою Поштою по всій Україні\n🏪 Можливий самовивіз з Одеської області, с. Великий Дальник"
-    },
-    {
-        "question": "Як оформити замовлення?",
-        "answer": "🛒 Додайте товари в кошик → оформіть замовлення\n⚡ Або використайте швидке замовлення\n📞 Або зателефонуйте нам: +380932599103"
     }
 ]
 
@@ -879,7 +859,6 @@ def get_faq_menu() -> InlineKeyboardMarkup:
 def get_contact_menu() -> InlineKeyboardMarkup:
     buttons = [
         [{"text": "📞 Зателефонувати", "callback_data": "call_us"}],
-        [{"text": "📧 Написати email", "callback_data": "email_us"}],
         [{"text": "📍 Наша адреса", "callback_data": "our_address"}],
         [{"text": "💬 Написати нам тут", "callback_data": "write_here"}],
         [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
@@ -1061,7 +1040,6 @@ def get_contact_text() -> str:
 
 <b>Оберіть спосіб зв'язку:</b>
 • <b>Телефон</b> - для швидких запитань
-• <b>Email</b> - для детальних консультацій
 • <b>Адреса</b> - для самовивозу
 • <b>Написати тут</b> - швидке повідомлення в чаті
 
@@ -1338,7 +1316,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("user_order_"):
             order_id = int(data.split("_")[2])
-            # Отримуємо деталі замовлення з БД
+            # Тут має бути отримання конкретного замовлення з БД
             await query.edit_message_text(
                 f"📋 Деталі замовлення #{order_id} (в розробці)",
                 reply_markup=get_back_keyboard("my_orders")
@@ -1396,16 +1374,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<i>Ми відповімо вам найближчим часом!</i>"
             await context.bot.send_message(chat_id, response, parse_mode='HTML')
         
-        elif data in ["call_us", "email_us", "our_address"]:
+        elif data in ["call_us", "our_address"]:
             if data == "call_us":
                 contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
                 contact_info += "✅ <code>+380932599103</code>\n\n"
                 contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
-            elif data == "email_us":
-                contact_info = "📧 <b>Email для листування:</b>\n\n"
-                contact_info += "Напишіть нам повідомлення в цьому чаті, і ми надамо email для подальшого листування.\n\n"
-                contact_info += "<i>Відповідаємо протягом 24 годин</i>"
-            else:
+            else:  # our_address
                 contact_info = "📍 <b>Наша адреса:</b>\n\n"
                 contact_info += "🏠 Одеська область\n"
                 contact_info += "📌 село Великий Дальник\n"
@@ -1438,7 +1412,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         temp_data["status"] = "нове"
                         log_order(temp_data)
                         
-                        # ВІДПРАВЛЯЄМО СПОВІЩЕННЯ АДМІНАМ
+                        # Відправляємо сповіщення адмінам
                         await notify_admins_about_order(context, temp_data)
                         
                         Database.clear_user_session(user_id)
