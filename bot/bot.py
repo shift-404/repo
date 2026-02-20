@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 
 # ==================== ЗМІННІ СЕРЕДОВИЩА ====================
 
-TOKEN = os.getenv("ADMIN_BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    logger.error("❌ ADMIN_BOT_TOKEN не знайдено!")
+    logger.error("❌ BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -2279,3 +2279,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
