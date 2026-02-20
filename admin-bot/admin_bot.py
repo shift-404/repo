@@ -10,8 +10,9 @@ from typing import Dict, List, Optional, Tuple
 from io import StringIO, BytesIO
 import asyncio
 import traceback
-import signal
 import time
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import pytz
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -226,9 +227,44 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# ==================== СЕСІЇ АДМІНІВ ====================
+# ==================== СЕСІЇ АДМІНІВ (БЕЗ АВТОМАТИЧНОГО ЗАВЕРШЕННЯ) ====================
 
 admin_sessions = {}
+# Зберігаємо час останнього підтвердження пароля
+last_password_check = {}
+
+def is_authenticated(user_id: int) -> bool:
+    """Перевіряє чи авторизований адмін (без автоматичного завершення)"""
+    return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
+
+def reset_daily_password(user_id: int):
+    """Скидає статус авторизації для щоденного підтвердження"""
+    if user_id in admin_sessions:
+        admin_sessions[user_id]["state"] = "waiting_password"
+        last_password_check.pop(user_id, None)
+
+# Функція для щоденного скидання пароля о 12:00
+async def daily_password_reset():
+    """Скидає пароль для всіх адмінів о 12:00 щодня"""
+    kyiv_tz = pytz.timezone('Europe/Kyiv')
+    now = datetime.now(kyiv_tz)
+    logger.info(f"🔄 Щоденне скидання паролів о {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    for user_id in list(admin_sessions.keys()):
+        if admin_sessions[user_id].get("state") == "authenticated":
+            admin_sessions[user_id]["state"] = "waiting_password"
+            last_password_check.pop(user_id, None)
+            try:
+                # Сповіщаємо адміна про необхідність повторного входу
+                application = Application.builder().token(TOKEN).build()
+                await application.bot.send_message(
+                    chat_id=user_id,
+                    text="🔐 <b>Щоденне підтвердження</b>\n\n"
+                         "Для продовження роботи в адмін-панелі, будь ласка, введіть пароль.",
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logger.error(f"❌ Помилка сповіщення адміна {user_id}: {e}")
 
 # ==================== ФУНКЦІЇ ДЛЯ ЗАМОВЛЕНЬ ====================
 
@@ -249,19 +285,30 @@ def get_all_orders():
         orders = []
         for row in rows:
             order = dict(row)
+            # Конвертуємо datetime в рядок
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
             
             cursor.execute('''
                 SELECT * FROM order_items 
                 WHERE order_id = %s
             ''', (order['order_id'],))
             items = cursor.fetchall()
-            order['items'] = [dict(item) for item in items]
             
+            order_items = []
+            for item in items:
+                item_dict = dict(item)
+                if item_dict.get('created_at') and hasattr(item_dict['created_at'], 'strftime'):
+                    item_dict['created_at'] = item_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                order_items.append(item_dict)
+            
+            order['items'] = order_items
             orders.append(order)
         
         return orders
     except Exception as e:
         logger.error(f"Помилка отримання замовлень: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -284,17 +331,29 @@ def get_orders_by_phone(phone: str):
         orders = []
         for row in rows:
             order = dict(row)
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
             cursor.execute('''
                 SELECT * FROM order_items 
                 WHERE order_id = %s
             ''', (order['order_id'],))
             items = cursor.fetchall()
-            order['items'] = [dict(item) for item in items]
+            
+            order_items = []
+            for item in items:
+                item_dict = dict(item)
+                if item_dict.get('created_at') and hasattr(item_dict['created_at'], 'strftime'):
+                    item_dict['created_at'] = item_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                order_items.append(item_dict)
+            
+            order['items'] = order_items
             orders.append(order)
         
         return orders
     except Exception as e:
         logger.error(f"Помилка отримання замовлень за телефоном: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -312,9 +371,19 @@ def get_new_orders():
             WHERE status = 'нове'
             ORDER BY created_at DESC
         ''')
-        return [dict(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            order = dict(row)
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            orders.append(order)
+        
+        return orders
     except Exception as e:
         logger.error(f"Помилка отримання нових замовлень: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -331,9 +400,19 @@ def get_quick_orders():
             SELECT * FROM quick_orders 
             ORDER BY created_at DESC
         ''')
-        return [dict(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            order = dict(row)
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            orders.append(order)
+        
+        return orders
     except Exception as e:
         logger.error(f"Помилка отримання швидких замовлень: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -353,6 +432,7 @@ def update_order_status(order_id: int, status: str):
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення статусу: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -366,15 +446,30 @@ def get_order_by_id(order_id: int):
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM orders WHERE order_id = %s', (order_id,))
-        order = dict(cursor.fetchone())
+        order_row = cursor.fetchone()
+        if not order_row:
+            return None
+            
+        order = dict(order_row)
+        if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+            order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
         
         cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order_id,))
         items = cursor.fetchall()
-        order['items'] = [dict(item) for item in items]
+        
+        order_items = []
+        for item in items:
+            item_dict = dict(item)
+            if item_dict.get('created_at') and hasattr(item_dict['created_at'], 'strftime'):
+                item_dict['created_at'] = item_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            order_items.append(item_dict)
+        
+        order['items'] = order_items
         
         return order
     except Exception as e:
         logger.error(f"Помилка отримання замовлення: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
@@ -393,9 +488,19 @@ def get_all_users():
             SELECT * FROM users 
             ORDER BY created_at DESC
         ''')
-        return [dict(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        
+        users = []
+        for row in rows:
+            user = dict(row)
+            if user.get('created_at') and hasattr(user['created_at'], 'strftime'):
+                user['created_at'] = user['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            users.append(user)
+        
+        return users
     except Exception as e:
         logger.error(f"Помилка отримання користувачів: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -418,11 +523,17 @@ def get_user_by_phone(phone: str):
         if order_user:
             user_id = order_user['user_id']
             cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-            return dict(cursor.fetchone())
+            user_row = cursor.fetchone()
+            if user_row:
+                user = dict(user_row)
+                if user.get('created_at') and hasattr(user['created_at'], 'strftime'):
+                    user['created_at'] = user['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                return user
         
         return None
     except Exception as e:
         logger.error(f"Помилка отримання користувача за телефоном: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
@@ -437,9 +548,15 @@ def get_user_by_id(user_id: int):
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        if row:
+            user = dict(row)
+            if user.get('created_at') and hasattr(user['created_at'], 'strftime'):
+                user['created_at'] = user['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            return user
+        return None
     except Exception as e:
         logger.error(f"Помилка отримання користувача: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
@@ -462,17 +579,29 @@ def get_user_orders(user_id: int):
         orders = []
         for row in rows:
             order = dict(row)
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
             cursor.execute('''
                 SELECT * FROM order_items 
                 WHERE order_id = %s
             ''', (order['order_id'],))
             items = cursor.fetchall()
-            order['items'] = [dict(item) for item in items]
+            
+            order_items = []
+            for item in items:
+                item_dict = dict(item)
+                if item_dict.get('created_at') and hasattr(item_dict['created_at'], 'strftime'):
+                    item_dict['created_at'] = item_dict['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                order_items.append(item_dict)
+            
+            order['items'] = order_items
             orders.append(order)
         
         return orders
     except Exception as e:
         logger.error(f"Помилка отримання замовлень користувача: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -490,9 +619,19 @@ def get_user_messages(user_id: int):
             WHERE user_id = %s 
             ORDER BY created_at DESC LIMIT 10
         ''', (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        
+        messages = []
+        for row in rows:
+            msg = dict(row)
+            if msg.get('created_at') and hasattr(msg['created_at'], 'strftime'):
+                msg['created_at'] = msg['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            messages.append(msg)
+        
+        return messages
     except Exception as e:
         logger.error(f"Помилка отримання повідомлень: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -510,9 +649,19 @@ def get_user_quick_orders(user_id: int):
             WHERE user_id = %s 
             ORDER BY created_at DESC
         ''', (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        rows = cursor.fetchall()
+        
+        orders = []
+        for row in rows:
+            order = dict(row)
+            if order.get('created_at') and hasattr(order['created_at'], 'strftime'):
+                order['created_at'] = order['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            orders.append(order)
+        
+        return orders
     except Exception as e:
         logger.error(f"Помилка отримання швидких замовлень: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -524,9 +673,21 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
     
     total_orders = len(orders)
     total_spent = sum(order['total'] for order in orders)
-    last_order = max(orders, key=lambda x: x['created_at'])
-    last_order_date = datetime.strptime(last_order['created_at'][:19], '%Y-%m-%d %H:%M:%S')
-    days_since_last = (datetime.now() - last_order_date).days
+    
+    # Безпечне отримання дати останнього замовлення
+    if orders:
+        last_order = max(orders, key=lambda x: x.get('created_at', ''))
+        last_order_date_str = last_order.get('created_at', '')
+        if last_order_date_str:
+            try:
+                last_order_date = datetime.strptime(last_order_date_str[:19], '%Y-%m-%d %H:%M:%S')
+                days_since_last = (datetime.now() - last_order_date).days
+            except:
+                days_since_last = 999
+        else:
+            days_since_last = 999
+    else:
+        days_since_last = 999
     
     if total_orders >= 5 and total_spent >= 5000:
         return "👑 VIP клієнт"
@@ -608,9 +769,19 @@ def get_all_reviews(limit: int = None):
             cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC LIMIT %s', (limit,))
         else:
             cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC')
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+        
+        reviews = []
+        for row in rows:
+            review = dict(row)
+            if review.get('created_at') and hasattr(review['created_at'], 'strftime'):
+                review['created_at'] = review['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            reviews.append(review)
+        
+        return reviews
     except Exception as e:
         logger.error(f"❌ Помилка отримання відгуків: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -624,7 +795,7 @@ def format_reviews_text(reviews: list) -> str:
     for i, review in enumerate(reviews, 1):
         rating_stars = "⭐" * review['rating']
         text += f"<b>{i}. {review['user_name']}</b> {rating_stars}\n"
-        text += f"📅 {review['created_at'][:16]}\n"
+        text += f"📅 {review['created_at'][:16] if review.get('created_at') else 'Н/Д'}\n"
         text += f"💬 {review['text']}\n"
         if review.get('order_id'):
             text += f"📦 Замовлення №{review['order_id']}\n"
@@ -644,7 +815,7 @@ def generate_reviews_file(reviews: list) -> bytes:
     for i, review in enumerate(reviews, 1):
         rating_stars = "⭐" * review['rating']
         output.write(f"{i}. {review['user_name']} {rating_stars}\n")
-        output.write(f"Дата: {review['created_at'][:16]}\n")
+        output.write(f"Дата: {review['created_at'][:16] if review.get('created_at') else 'Н/Д'}\n")
         output.write(f"Текст: {review['text']}\n")
         if review.get('order_id'):
             output.write(f"Замовлення: №{review['order_id']}\n")
@@ -731,6 +902,7 @@ def get_statistics():
         }
     except Exception as e:
         logger.error(f"Помилка отримання статистики: {e}")
+        logger.error(traceback.format_exc())
         return {}
     finally:
         conn.close()
@@ -750,19 +922,14 @@ def get_all_products():
         
         products = []
         for row in rows:
-            products.append({
-                "id": row['id'],
-                "name": row['name'],
-                "price": row['price'],
-                "category": row['category'],
-                "description": row['description'],
-                "unit": row['unit'],
-                "image": row['image'],
-                "details": row['details']
-            })
+            product = dict(row)
+            if product.get('created_at') and hasattr(product['created_at'], 'strftime'):
+                product['created_at'] = product['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            products.append(product)
         return products
     except Exception as e:
         logger.error(f"❌ Помилка отримання товарів: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -796,6 +963,7 @@ def update_product(product_id: int, **kwargs):
         return True
     except Exception as e:
         logger.error(f"❌ Помилка оновлення товару: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -843,6 +1011,7 @@ def delete_product(product_id: int):
         return True
     except Exception as e:
         logger.error(f"❌ Помилка видалення товару: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -861,15 +1030,14 @@ def get_all_admins():
         rows = cursor.fetchall()
         admins = []
         for row in rows:
-            admins.append({
-                "user_id": row['user_id'],
-                "username": row['username'],
-                "added_by": row['added_by'],
-                "added_at": row['added_at']
-            })
+            admin = dict(row)
+            if admin.get('added_at') and hasattr(admin['added_at'], 'strftime'):
+                admin['added_at'] = admin['added_at'].strftime('%Y-%m-%d %H:%M:%S')
+            admins.append(admin)
         return admins
     except Exception as e:
         logger.error(f"❌ Помилка отримання адмінів: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
@@ -893,6 +1061,7 @@ def add_admin(user_id: int, username: str = "", added_by: int = 0):
         return True
     except Exception as e:
         logger.error(f"❌ Помилка додавання адміна: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -910,6 +1079,7 @@ def remove_admin(user_id: int):
         return True
     except Exception as e:
         logger.error(f"❌ Помилка видалення адміна: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -927,6 +1097,7 @@ def is_admin(user_id: int) -> bool:
         return count > 0
     except Exception as e:
         logger.error(f"❌ Помилка перевірки адміна: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -993,7 +1164,7 @@ def generate_users_report(users: list, format: str = "txt"):
             output.write(f"ID: {user['user_id']}\n")
             output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
             output.write(f"Username: @{user['username']}\n")
-            output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
+            output.write(f"Дата реєстрації: {user['created_at'][:16] if user.get('created_at') else 'Н/Д'}\n")
             output.write(f"Сегмент: {segment}\n")
             output.write(f"Замовлень: {len(orders)}\n")
             output.write("-" * 40 + "\n")
@@ -1013,7 +1184,7 @@ def generate_users_report(users: list, format: str = "txt"):
                 user['first_name'],
                 user['last_name'],
                 user['username'],
-                user['created_at'][:16],
+                user['created_at'][:16] if user.get('created_at') else 'Н/Д',
                 segment,
                 len(orders)
             ])
@@ -1252,11 +1423,6 @@ def get_reviews_back_keyboard() -> InlineKeyboardMarkup:
     buttons = [[{"text": "🔙 Назад до відгуків", "callback_data": "admin_reviews"}]]
     return create_inline_keyboard(buttons)
 
-# ==================== ПЕРЕВІРКА АВТОРИЗАЦІЇ ====================
-
-def is_authenticated(user_id: int) -> bool:
-    return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
-
 # ==================== ОБРОБНИКИ КОМАНД ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1280,6 +1446,7 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if text == ADMIN_PASSWORD:
         admin_sessions[user_id] = {"state": "authenticated", "authenticated_at": datetime.now().isoformat()}
+        last_password_check[user_id] = datetime.now()
         
         if not is_admin(user_id):
             add_admin(user_id, user.username or "", user_id)
@@ -1312,6 +1479,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "admin_logout":
             admin_sessions.pop(user_id, None)
+            last_password_check.pop(user_id, None)
             await query.edit_message_text("🔐 Ви вийшли з адмін-панелі\n\nДля повторного входу напишіть /start")
             return
         
@@ -1421,7 +1589,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             text = f"📋 Всі замовлення\n\nВсього: {len(orders)}\n\n"
             for order in orders[:10]:
-                text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+                created_at = order.get('created_at', '')
+                if created_at and len(created_at) > 16:
+                    created_at = created_at[:16]
+                text += f"№{order['order_id']} | {created_at}\n"
                 text += f"Клієнт: {order['user_name']}\n"
                 text += f"Телефон: {order['phone']}\n"
                 text += f"Сума: {order['total']:.2f} грн\n"
@@ -1443,6 +1614,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             keyboard = []
             for order in orders[:20]:
+                created_at = order.get('created_at', '')
+                if created_at and len(created_at) > 16:
+                    created_at = created_at[:16]
                 keyboard.append([InlineKeyboardButton(f"№{order['order_id']} - {order['user_name']} - {order['total']} грн", callback_data=f"order_view_{order['order_id']}")])
             keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")])
             await query.edit_message_text("📋 Детальний перегляд замовлень\n\nОберіть замовлення:", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1455,7 +1629,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = f"🆕 Нові замовлення\n\nВсього: {len(orders)}\n\n"
                 for order in orders[:10]:
-                    text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+                    created_at = order.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    text += f"№{order['order_id']} | {created_at}\n"
                     text += f"Клієнт: {order['user_name']}\n"
                     text += f"Сума: {order['total']:.2f} грн\n"
                     text += f"Телефон: {order['phone']}\n"
@@ -1471,7 +1648,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = f"⚡ Швидкі замовлення\n\nВсього: {len(orders)}\n\n"
                 for order in orders[:10]:
-                    text += f"№{order['id']} | {order['created_at'][:16]}\n"
+                    created_at = order.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    text += f"№{order['id']} | {created_at}\n"
                     text += f"Клієнт: {order['user_name']}\n"
                     text += f"Телефон: {order['phone']}\n"
                     text += f"Продукт: {order['product_name']}\n"
@@ -1636,7 +1816,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for user in users[:20]:
                     orders = get_user_orders(user['user_id'])
                     segment = get_customer_segment(user, orders)
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📊 {segment}\n📦 Замовлень: {len(orders)}\n{'─'*30}\n"
+                    created_at = user.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    text += f"ID: {user['user_id']}\n"
+                    text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+                    text += f"Username: @{user['username']}\n"
+                    text += f"📊 {segment}\n"
+                    text += f"📦 Замовлень: {len(orders)}\n"
+                    text += f"{'─'*30}\n"
                 if len(users) > 20:
                     text += f"... та ще {len(users) - 20} клієнтів"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
@@ -1700,7 +1888,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 segment = get_customer_segment(user, orders)
                 if "Неактивний" in segment:
                     count += 1
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\nОстаннє замовлення: {orders[0]['created_at'][:16] if orders else 'Немає'}\n{'─'*30}\n"
+                    last_order_date = "Немає"
+                    if orders:
+                        last_order = orders[0].get('created_at', '')
+                        if last_order and len(last_order) > 16:
+                            last_order = last_order[:16]
+                        last_order_date = last_order
+                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\nОстаннє замовлення: {last_order_date}\n{'─'*30}\n"
             if count == 0:
                 text = "💤 Неактивних клієнтів не знайдено"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")]]
@@ -1722,28 +1916,60 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             messages = get_user_messages(customer_id)
             quick_orders = get_user_quick_orders(customer_id)
             segment = get_customer_segment(user, orders)
-            text = f"👤 ПРОФІЛЬ КЛІЄНТА\n\nID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📅 Реєстрація: {user['created_at'][:16]}\n📊 Сегмент: {segment}\n\n"
+            created_at = user.get('created_at', '')
+            if created_at and len(created_at) > 16:
+                created_at = created_at[:16]
+            
+            text = f"👤 ПРОФІЛЬ КЛІЄНТА\n\n"
+            text += f"ID: {user['user_id']}\n"
+            text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+            text += f"Username: @{user['username']}\n"
+            text += f"📅 Реєстрація: {created_at}\n"
+            text += f"📊 Сегмент: {segment}\n\n"
+            
             if orders:
                 total_spent = sum(o['total'] for o in orders)
-                text += f"📦 Всього замовлень: {len(orders)}\n💰 Загальна сума: {total_spent:.2f} грн\n💳 Середній чек: {total_spent/len(orders):.2f} грн\n\n"
+                text += f"📦 Всього замовлень: {len(orders)}\n"
+                text += f"💰 Загальна сума: {total_spent:.2f} грн\n"
+                text += f"💳 Середній чек: {total_spent/len(orders):.2f} грн\n\n"
+                
                 text += "🆕 Останнє замовлення:\n"
                 last = orders[0]
-                text += f"   №{last['order_id']} від {last['created_at'][:16]}\n   Сума: {last['total']:.2f} грн\n   Статус: {last['status']}\n"
+                last_created = last.get('created_at', '')
+                if last_created and len(last_created) > 16:
+                    last_created = last_created[:16]
+                text += f"   №{last['order_id']} від {last_created}\n"
+                text += f"   Сума: {last['total']:.2f} грн\n"
+                text += f"   Статус: {last['status']}\n"
             else:
                 text += "📦 Замовлень: 0\n"
-            text += f"\n💬 Повідомлень: {len(messages)}\n⚡ Швидких замовлень: {len(quick_orders)}"
-            await query.edit_message_text(text, reply_markup=get_customer_actions_menu(customer_id))
+            
+            text += f"\n💬 Повідомлень: {len(messages)}\n"
+            text += f"⚡ Швидких замовлень: {len(quick_orders)}"
+            
+            await query.edit_message_text(
+                text,
+                reply_markup=get_customer_actions_menu(customer_id)
+            )
             return
         
         elif data.startswith("customer_orders_"):
             customer_id = int(data.split("_")[2])
             orders = get_user_orders(customer_id)
+            
             if not orders:
                 text = "📋 Історія замовлень\n\nУ клієнта немає замовлень."
             else:
                 text = f"📋 ІСТОРІЯ ЗАМОВЛЕНЬ\n\nВсього: {len(orders)}\n\n"
                 for order in orders:
-                    text += f"№{order['order_id']} | {order['created_at'][:16]}\nСума: {order['total']:.2f} грн\nСтатус: {order['status']}\n{'─'*30}\n"
+                    created_at = order.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    text += f"№{order['order_id']} | {created_at}\n"
+                    text += f"Сума: {order['total']:.2f} грн\n"
+                    text += f"Статус: {order['status']}\n"
+                    text += f"{'─'*30}\n"
+            
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -1751,12 +1977,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("customer_messages_"):
             customer_id = int(data.split("_")[2])
             messages = get_user_messages(customer_id)
+            
             if not messages:
                 text = "💬 Повідомлення\n\nУ клієнта немає повідомлень."
             else:
                 text = f"💬 ОСТАННІ ПОВІДОМЛЕННЯ\n\n"
                 for msg in messages[:10]:
-                    text += f"📅 {msg['created_at'][:16]}\n📝 {msg['text'][:100]}\n{'─'*30}\n"
+                    created_at = msg.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    text += f"📅 {created_at}\n"
+                    text += f"📝 {msg['text'][:100]}\n"
+                    text += f"{'─'*30}\n"
+            
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -1925,7 +2158,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = "📋 СПИСОК АДМІНІСТРАТОРІВ\n\n"
                 for admin in admins:
-                    text += f"ID: {admin['user_id']}\nUsername: @{admin['username']}\nДодано: {admin['added_at'][:16]}\n{'─'*30}\n"
+                    added_at = admin.get('added_at', '')
+                    if added_at and len(added_at) > 16:
+                        added_at = added_at[:16]
+                    text += f"ID: {admin['user_id']}\nUsername: @{admin['username']}\nДодано: {added_at}\n{'─'*30}\n"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_manage_admins")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -2004,11 +2240,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Помилка в button_handler: {e}")
         logger.error(traceback.format_exc())
         try:
-            # Повертаємо користувача до попереднього меню замість повідомлення про помилку
-            await query.edit_message_text(
-                "❌ Сталася помилка. Повертаємось до меню...",
-                reply_markup=get_main_menu()
-            )
+            await query.edit_message_text("❌ Сталася помилка. Спробуйте ще раз.")
         except:
             pass
 
@@ -2035,10 +2267,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
             admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text(
-                "Введіть ціну товару (тільки число):",
-                reply_markup=get_back_keyboard("admin_products")
-            )
+            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_price":
@@ -2046,51 +2275,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price = float(text.replace(",", "."))
                 admin_sessions[user_id]["product_price"] = price
                 admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text(
-                    "Введіть категорію товару:",
-                    reply_markup=get_back_keyboard("admin_products")
-                )
+                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("admin_products"))
             except ValueError:
-                await update.message.reply_text(
-                    "❌ Невірний формат. Введіть число (наприклад: 250):",
-                    reply_markup=get_back_keyboard("admin_products")
-                )
+                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_category":
             admin_sessions[user_id]["product_category"] = text
             admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text(
-                "Введіть опис товару:",
-                reply_markup=get_back_keyboard("admin_products")
-            )
+            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_description":
             admin_sessions[user_id]["product_description"] = text
             admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text(
-                "Введіть одиницю виміру (наприклад: банка, кг, шт):",
-                reply_markup=get_back_keyboard("admin_products")
-            )
+            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_unit":
             admin_sessions[user_id]["product_unit"] = text
             admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text(
-                "Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):",
-                reply_markup=get_back_keyboard("admin_products")
-            )
+            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_image":
             admin_sessions[user_id]["product_image"] = text
             admin_sessions[user_id]["action"] = "add_product_details"
-            await update.message.reply_text(
-                "Введіть деталі товару (об'єм, вага, склад тощо):",
-                reply_markup=get_back_keyboard("admin_products")
-            )
+            await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("admin_products"))
             return
         
         elif action == "add_product_details":
@@ -2112,10 +2323,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_products_menu()
                 )
             else:
-                await update.message.reply_text(
-                    "❌ Помилка при додаванні товару",
-                    reply_markup=get_products_menu()
-                )
+                await update.message.reply_text("❌ Помилка при додаванні товару", reply_markup=get_products_menu())
             
             admin_sessions[user_id].pop("action", None)
             return
@@ -2131,10 +2339,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     update_data["price"] = float(text.replace(",", "."))
                 except ValueError:
-                    await update.message.reply_text(
-                        "❌ Невірний формат. Введіть число:",
-                        reply_markup=get_back_keyboard(f"edit_product_{product_id}")
-                    )
+                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard(f"edit_product_{product_id}"))
                     return
             elif field == "desc":
                 update_data["description"] = text
@@ -2142,15 +2347,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_data["category"] = text
             
             if update_product(product_id, **update_data):
-                await update.message.reply_text(
-                    f"✅ Товар #{product_id} оновлено!",
-                    reply_markup=get_products_menu()
-                )
+                await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
             else:
-                await update.message.reply_text(
-                    "❌ Помилка при оновленні товару",
-                    reply_markup=get_products_menu()
-                )
+                await update.message.reply_text("❌ Помилка при оновленні товару", reply_markup=get_products_menu())
             
             admin_sessions[user_id].pop("action", None)
             return
@@ -2158,14 +2357,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "search_orders_by_phone":
             orders = get_orders_by_phone(text)
             if not orders:
-                await update.message.reply_text(
-                    f"❌ Замовлень за номером {text} не знайдено",
-                    reply_markup=get_orders_menu()
-                )
+                await update.message.reply_text(f"❌ Замовлень за номером {text} не знайдено", reply_markup=get_orders_menu())
             else:
                 response = f"📋 Знайдено замовлень: {len(orders)}\n\n"
                 for order in orders[:5]:
-                    response += f"№{order['order_id']} | {order['created_at'][:16]}\nСума: {order['total']:.2f} грн\nСтатус: {order['status']}\n{'─'*30}\n"
+                    created_at = order.get('created_at', '')
+                    if created_at and len(created_at) > 16:
+                        created_at = created_at[:16]
+                    response += f"№{order['order_id']} | {created_at}\n"
+                    response += f"Сума: {order['total']:.2f} грн\n"
+                    response += f"Статус: {order['status']}\n"
+                    response += f"{'─'*30}\n"
                 keyboard = []
                 for order in orders[:10]:
                     keyboard.append([InlineKeyboardButton(f"📦 №{order['order_id']}", callback_data=f"order_view_{order['order_id']}")])
@@ -2177,19 +2379,29 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "search_customer_by_phone":
             user_data = get_user_by_phone(text)
             if not user_data:
-                await update.message.reply_text(
-                    f"❌ Клієнта з телефоном {text} не знайдено",
-                    reply_markup=get_customers_menu()
-                )
+                await update.message.reply_text(f"❌ Клієнта з телефоном {text} не знайдено", reply_markup=get_customers_menu())
             else:
                 orders = get_user_orders(user_data['user_id'])
                 segment = get_customer_segment(user_data, orders)
-                response = f"👤 КЛІЄНТ ЗНАЙДЕНИЙ\n\nID: {user_data['user_id']}\nІм'я: {user_data['first_name']} {user_data['last_name']}\nUsername: @{user_data['username']}\n📊 Сегмент: {segment}\n📦 Замовлень: {len(orders)}\n\n"
+                created_at = user_data.get('created_at', '')
+                if created_at and len(created_at) > 16:
+                    created_at = created_at[:16]
+                
+                response = f"👤 КЛІЄНТ ЗНАЙДЕНИЙ\n\n"
+                response += f"ID: {user_data['user_id']}\n"
+                response += f"Ім'я: {user_data['first_name']} {user_data['last_name']}\n"
+                response += f"Username: @{user_data['username']}\n"
+                response += f"📅 Реєстрація: {created_at}\n"
+                response += f"📊 Сегмент: {segment}\n"
+                response += f"📦 Замовлень: {len(orders)}\n\n"
+                
                 if orders:
                     total = sum(o['total'] for o in orders)
                     response += f"💰 Загальна сума: {total:.2f} грн"
+                
                 keyboard = [[InlineKeyboardButton("👤 Переглянути профіль", callback_data=f"customer_view_{user_data['user_id']}")]]
                 keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_customers")])
+                
                 await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(keyboard))
             admin_sessions[user_id].pop("action", None)
             return
@@ -2202,15 +2414,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"📢 <b>Повідомлення від адміністратора</b>\n\n{text}",
                     parse_mode='HTML'
                 )
-                await update.message.reply_text(
-                    "✅ Повідомлення надіслано!",
-                    reply_markup=get_customer_actions_menu(customer_id)
-                )
+                await update.message.reply_text("✅ Повідомлення надіслано!", reply_markup=get_customer_actions_menu(customer_id))
             except Exception as e:
-                await update.message.reply_text(
-                    f"❌ Помилка при надсиланні: {e}",
-                    reply_markup=get_customer_actions_menu(customer_id)
-                )
+                await update.message.reply_text(f"❌ Помилка при надсиланні: {e}", reply_markup=get_customer_actions_menu(customer_id))
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2228,10 +2434,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "change_password":
             global ADMIN_PASSWORD
             ADMIN_PASSWORD = text
-            await update.message.reply_text(
-                "✅ Пароль успішно змінено!",
-                reply_markup=get_settings_menu()
-            )
+            await update.message.reply_text("✅ Пароль успішно змінено!", reply_markup=get_settings_menu())
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2253,16 +2456,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text_response = format_reviews_text(reviews)
                     else:
                         text_response = "⭐ Відгуків поки немає"
-                    await update.message.reply_text(
-                        text_response,
-                        reply_markup=get_reviews_back_keyboard(),
-                        parse_mode='HTML'
-                    )
+                    await update.message.reply_text(text_response, reply_markup=get_reviews_back_keyboard(), parse_mode='HTML')
             except ValueError:
-                await update.message.reply_text(
-                    "❌ Введіть коректне число більше 0",
-                    reply_markup=get_reviews_back_keyboard()
-                )
+                await update.message.reply_text("❌ Введіть коректне число більше 0", reply_markup=get_reviews_back_keyboard())
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2272,60 +2468,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_user = get_user_by_id(new_admin_id)
                 if new_user:
                     if add_admin(new_admin_id, new_user['username'], user_id):
-                        await update.message.reply_text(
-                            f"✅ Користувача {new_user['first_name']} додано до адмінів!",
-                            reply_markup=get_admins_menu()
-                        )
+                        await update.message.reply_text(f"✅ Користувача {new_user['first_name']} додано до адмінів!", reply_markup=get_admins_menu())
                     else:
-                        await update.message.reply_text(
-                            "❌ Помилка при додаванні адміна",
-                            reply_markup=get_admins_menu()
-                        )
+                        await update.message.reply_text("❌ Помилка при додаванні адміна", reply_markup=get_admins_menu())
                 else:
-                    await update.message.reply_text(
-                        "❌ Користувача з таким ID не знайдено в базі\n\nСпочатку користувач має написати основному боту /start",
-                        reply_markup=get_admins_menu()
-                    )
+                    await update.message.reply_text("❌ Користувача з таким ID не знайдено в базі\n\nСпочатку користувач має написати основному боту /start", reply_markup=get_admins_menu())
             except ValueError:
-                await update.message.reply_text(
-                    "❌ Введіть коректний числовий ID",
-                    reply_markup=get_admins_menu()
-                )
+                await update.message.reply_text("❌ Введіть коректний числовий ID", reply_markup=get_admins_menu())
             admin_sessions[user_id].pop("action", None)
             return
         
         else:
-            await update.message.reply_text(
-                "❌ Невідома команда",
-                reply_markup=get_main_menu()
-            )
+            await update.message.reply_text("❌ Невідома команда", reply_markup=get_main_menu())
             
     except Exception as e:
         logger.error(f"❌ Помилка в message_handler: {e}")
         logger.error(traceback.format_exc())
-        # Повертаємо користувача до головного меню
-        await update.message.reply_text(
-            "❌ Сталася помилка. Повертаємось до меню...",
-            reply_markup=get_main_menu()
-        )
-
-# ==================== ОБРОБНИК СИГНАЛІВ ====================
-
-application = None
-
-def signal_handler(sig, frame):
-    logger.info("🛑 Отримано сигнал завершення, закриваю з'єднання...")
-    if application:
-        application.stop()
-    sys.exit(0)
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
 
 # ==================== ОСНОВНА ФУНКЦІЯ ====================
 
 def main():
-    global application
     logger.info("🚀 Запуск адмін-бота Бонелет...")
     
     try:
@@ -2358,6 +2520,11 @@ def main():
             logger.warning("⚠️ Не вдалося підключитись до БД")
             init_database_if_empty()
         
+        # Налаштування планувальника для щоденного скидання пароля о 12:00
+        scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kyiv'))
+        scheduler.add_job(daily_password_reset, 'cron', hour=12, minute=0)
+        scheduler.start()
+        
         application = Application.builder().token(TOKEN).build()
         
         application.add_handler(CommandHandler("start", start))
@@ -2371,8 +2538,6 @@ def main():
         logger.error(f"❌ Критична помилка: {e}")
         logger.error(traceback.format_exc())
         time.sleep(5)
-        # Автоматичний перезапуск при критичній помилці
-        main()
 
 if __name__ == "__main__":
     main()
