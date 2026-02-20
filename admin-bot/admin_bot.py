@@ -20,7 +20,9 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-
+# Додайте цей код на початку адмін-бота
+import requests
+requests.post(f'https://api.telegram.org/bot{TOKEN}/deleteWebhook')
 # ==================== НАЛАШТУВАННЯ ЛОГУВАННЯ ====================
 
 logging.basicConfig(
@@ -2228,6 +2230,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Помилка в message_handler: {e}")
         logger.error(traceback.format_exc())
 
+# Додайте обробник сигналів
+import signal
+
+def signal_handler(sig, frame):
+    logger.info("🛑 Отримано сигнал завершення, закриваю з'єднання...")
+    application.stop()
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 # ==================== ОСНОВНА ФУНКЦІЯ ====================
 
 def main():
@@ -2279,3 +2292,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
