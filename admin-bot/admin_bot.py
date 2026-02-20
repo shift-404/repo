@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Tuple
 from io import StringIO, BytesIO
 import asyncio
 import traceback
+import signal
+import time
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -20,9 +22,7 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-# Додайте цей код на початку адмін-бота
-import requests
-requests.post(f'https://api.telegram.org/bot{TOKEN}/deleteWebhook')
+
 # ==================== НАЛАШТУВАННЯ ЛОГУВАННЯ ====================
 
 logging.basicConfig(
@@ -2004,7 +2004,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Помилка в button_handler: {e}")
         logger.error(traceback.format_exc())
         try:
-            await query.edit_message_text("❌ Сталася помилка. Спробуйте ще раз.")
+            # Повертаємо користувача до попереднього меню замість повідомлення про помилку
+            await query.edit_message_text(
+                "❌ Сталася помилка. Повертаємось до меню...",
+                reply_markup=get_main_menu()
+            )
         except:
             pass
 
@@ -2031,7 +2035,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
             admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text(
+                "Введіть ціну товару (тільки число):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_price":
@@ -2039,33 +2046,51 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price = float(text.replace(",", "."))
                 admin_sessions[user_id]["product_price"] = price
                 admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text(
+                    "Введіть категорію товару:",
+                    reply_markup=get_back_keyboard("admin_products")
+                )
             except ValueError:
-                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text(
+                    "❌ Невірний формат. Введіть число (наприклад: 250):",
+                    reply_markup=get_back_keyboard("admin_products")
+                )
             return
         
         elif action == "add_product_category":
             admin_sessions[user_id]["product_category"] = text
             admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text(
+                "Введіть опис товару:",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_description":
             admin_sessions[user_id]["product_description"] = text
             admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text(
+                "Введіть одиницю виміру (наприклад: банка, кг, шт):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_unit":
             admin_sessions[user_id]["product_unit"] = text
             admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text(
+                "Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_image":
             admin_sessions[user_id]["product_image"] = text
             admin_sessions[user_id]["action"] = "add_product_details"
-            await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text(
+                "Введіть деталі товару (об'єм, вага, склад тощо):",
+                reply_markup=get_back_keyboard("admin_products")
+            )
             return
         
         elif action == "add_product_details":
@@ -2087,7 +2112,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_products_menu()
                 )
             else:
-                await update.message.reply_text("❌ Помилка при додаванні товару", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    "❌ Помилка при додаванні товару",
+                    reply_markup=get_products_menu()
+                )
             
             admin_sessions[user_id].pop("action", None)
             return
@@ -2103,7 +2131,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     update_data["price"] = float(text.replace(",", "."))
                 except ValueError:
-                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard(f"edit_product_{product_id}"))
+                    await update.message.reply_text(
+                        "❌ Невірний формат. Введіть число:",
+                        reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                    )
                     return
             elif field == "desc":
                 update_data["description"] = text
@@ -2111,9 +2142,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_data["category"] = text
             
             if update_product(product_id, **update_data):
-                await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    f"✅ Товар #{product_id} оновлено!",
+                    reply_markup=get_products_menu()
+                )
             else:
-                await update.message.reply_text("❌ Помилка при оновленні товару", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні товару",
+                    reply_markup=get_products_menu()
+                )
             
             admin_sessions[user_id].pop("action", None)
             return
@@ -2121,7 +2158,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "search_orders_by_phone":
             orders = get_orders_by_phone(text)
             if not orders:
-                await update.message.reply_text(f"❌ Замовлень за номером {text} не знайдено", reply_markup=get_orders_menu())
+                await update.message.reply_text(
+                    f"❌ Замовлень за номером {text} не знайдено",
+                    reply_markup=get_orders_menu()
+                )
             else:
                 response = f"📋 Знайдено замовлень: {len(orders)}\n\n"
                 for order in orders[:5]:
@@ -2137,7 +2177,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "search_customer_by_phone":
             user_data = get_user_by_phone(text)
             if not user_data:
-                await update.message.reply_text(f"❌ Клієнта з телефоном {text} не знайдено", reply_markup=get_customers_menu())
+                await update.message.reply_text(
+                    f"❌ Клієнта з телефоном {text} не знайдено",
+                    reply_markup=get_customers_menu()
+                )
             else:
                 orders = get_user_orders(user_data['user_id'])
                 segment = get_customer_segment(user_data, orders)
@@ -2159,9 +2202,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text=f"📢 <b>Повідомлення від адміністратора</b>\n\n{text}",
                     parse_mode='HTML'
                 )
-                await update.message.reply_text("✅ Повідомлення надіслано!", reply_markup=get_customer_actions_menu(customer_id))
+                await update.message.reply_text(
+                    "✅ Повідомлення надіслано!",
+                    reply_markup=get_customer_actions_menu(customer_id)
+                )
             except Exception as e:
-                await update.message.reply_text(f"❌ Помилка при надсиланні: {e}", reply_markup=get_customer_actions_menu(customer_id))
+                await update.message.reply_text(
+                    f"❌ Помилка при надсиланні: {e}",
+                    reply_markup=get_customer_actions_menu(customer_id)
+                )
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2179,7 +2228,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "change_password":
             global ADMIN_PASSWORD
             ADMIN_PASSWORD = text
-            await update.message.reply_text("✅ Пароль успішно змінено!", reply_markup=get_settings_menu())
+            await update.message.reply_text(
+                "✅ Пароль успішно змінено!",
+                reply_markup=get_settings_menu()
+            )
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2201,9 +2253,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text_response = format_reviews_text(reviews)
                     else:
                         text_response = "⭐ Відгуків поки немає"
-                    await update.message.reply_text(text_response, reply_markup=get_reviews_back_keyboard(), parse_mode='HTML')
+                    await update.message.reply_text(
+                        text_response,
+                        reply_markup=get_reviews_back_keyboard(),
+                        parse_mode='HTML'
+                    )
             except ValueError:
-                await update.message.reply_text("❌ Введіть коректне число більше 0", reply_markup=get_reviews_back_keyboard())
+                await update.message.reply_text(
+                    "❌ Введіть коректне число більше 0",
+                    reply_markup=get_reviews_back_keyboard()
+                )
             admin_sessions[user_id].pop("action", None)
             return
         
@@ -2213,29 +2272,51 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 new_user = get_user_by_id(new_admin_id)
                 if new_user:
                     if add_admin(new_admin_id, new_user['username'], user_id):
-                        await update.message.reply_text(f"✅ Користувача {new_user['first_name']} додано до адмінів!", reply_markup=get_admins_menu())
+                        await update.message.reply_text(
+                            f"✅ Користувача {new_user['first_name']} додано до адмінів!",
+                            reply_markup=get_admins_menu()
+                        )
                     else:
-                        await update.message.reply_text("❌ Помилка при додаванні адміна", reply_markup=get_admins_menu())
+                        await update.message.reply_text(
+                            "❌ Помилка при додаванні адміна",
+                            reply_markup=get_admins_menu()
+                        )
                 else:
-                    await update.message.reply_text("❌ Користувача з таким ID не знайдено в базі\n\nСпочатку користувач має написати основному боту /start", reply_markup=get_admins_menu())
+                    await update.message.reply_text(
+                        "❌ Користувача з таким ID не знайдено в базі\n\nСпочатку користувач має написати основному боту /start",
+                        reply_markup=get_admins_menu()
+                    )
             except ValueError:
-                await update.message.reply_text("❌ Введіть коректний числовий ID", reply_markup=get_admins_menu())
+                await update.message.reply_text(
+                    "❌ Введіть коректний числовий ID",
+                    reply_markup=get_admins_menu()
+                )
             admin_sessions[user_id].pop("action", None)
             return
         
         else:
-            await update.message.reply_text("❌ Невідома команда", reply_markup=get_main_menu())
+            await update.message.reply_text(
+                "❌ Невідома команда",
+                reply_markup=get_main_menu()
+            )
             
     except Exception as e:
         logger.error(f"❌ Помилка в message_handler: {e}")
         logger.error(traceback.format_exc())
+        # Повертаємо користувача до головного меню
+        await update.message.reply_text(
+            "❌ Сталася помилка. Повертаємось до меню...",
+            reply_markup=get_main_menu()
+        )
 
-# Додайте обробник сигналів
-import signal
+# ==================== ОБРОБНИК СИГНАЛІВ ====================
+
+application = None
 
 def signal_handler(sig, frame):
     logger.info("🛑 Отримано сигнал завершення, закриваю з'єднання...")
-    application.stop()
+    if application:
+        application.stop()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -2244,6 +2325,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ==================== ОСНОВНА ФУНКЦІЯ ====================
 
 def main():
+    global application
     logger.info("🚀 Запуск адмін-бота Бонелет...")
     
     try:
@@ -2289,7 +2371,8 @@ def main():
         logger.error(f"❌ Критична помилка: {e}")
         logger.error(traceback.format_exc())
         time.sleep(5)
+        # Автоматичний перезапуск при критичній помилці
+        main()
 
 if __name__ == "__main__":
     main()
-
