@@ -740,7 +740,32 @@ class Database:
                 WHERE user_id = %s 
                 ORDER BY created_at DESC
             ''', (user_id,))
-            return cursor.fetchall()
+            rows = cursor.fetchall()
+            
+            orders = []
+            for row in rows:
+                order = dict(row)
+                # Конвертуємо datetime в рядок безпечно
+                created_at = order.get('created_at')
+                if created_at and hasattr(created_at, 'strftime'):
+                    created_at_str = created_at.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    created_at_str = str(created_at) if created_at else 'Н/Д'
+                
+                orders.append({
+                    "order_id": order['order_id'],
+                    "user_id": order['user_id'],
+                    "user_name": order['user_name'],
+                    "username": order['username'],
+                    "phone": order['phone'],
+                    "city": order['city'],
+                    "np_department": order['np_department'],
+                    "total": order['total'],
+                    "status": order['status'],
+                    "order_type": order['order_type'],
+                    "created_at": created_at_str
+                })
+            return orders
         except Exception as e:
             logger.error(f"❌ Ошибка получения заказов пользователя: {e}")
             return []
@@ -1089,7 +1114,6 @@ def get_my_orders_text(orders: List[Dict]) -> str:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        chat_id = update.effective_chat.id
         user = update.effective_user
         user_id = user.id
         
@@ -1128,6 +1152,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
+        chat_id = update.effective_chat.id  # ← ВИПРАВЛЕНО: додано chat_id
         user = query.from_user
         user_id = user.id
         data = query.data
@@ -1202,7 +1227,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "📊 <b>Введіть кількість (тільки число):</b>\n\n"
             response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
             
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
         
         elif data.startswith("quick_order_"):
             product_id = int(data.split("_")[2])
@@ -1234,7 +1259,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<i>Приклад: +380932599103 або 0932599103</i>\n\n"
             response += "<b>Ми зателефонуємо вам для уточнення деталей замовлення!</b>"
             
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
         
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
@@ -1268,7 +1293,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "• Бажаний час доставки\n\n"
             response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
             
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
             
             logger.info(f"\n{'='*80}")
             logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ):")
@@ -1348,7 +1373,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "📝 <b>Введіть ваше ПІБ (повне ім'я):</b>\n\n"
             response += "<i>Наприклад: Іванов Іван Іванович</i>"
             
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
         
         elif data == "clear_cart":
             Database.clear_cart(user_id)
@@ -1372,7 +1397,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "• Пропозиції співпраці\n"
             response += "• Інші питання\n\n"
             response += "<i>Ми відповімо вам найближчим часом!</i>"
-            await context.bot.send_message(chat_id, response, parse_mode='HTML')
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
         
         elif data in ["call_us", "our_address"]:
             if data == "call_us":
@@ -1464,7 +1489,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        chat_id = update.effective_chat.id
         user = update.effective_user
         user_id = user.id
         text = update.message.text.strip()
