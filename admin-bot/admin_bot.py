@@ -11,7 +11,6 @@ from io import StringIO, BytesIO
 import asyncio
 import traceback
 import time
-import pytz
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -32,13 +31,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ==================== ЧАСОВИЙ ПОЯС ====================
+# ==================== КИЇВСЬКИЙ ЧАСОВИЙ ПОЯС ====================
 
-KYIV_TZ = pytz.timezone('Europe/Kyiv')
+KYIV_TZ = None
+try:
+    import pytz
+    KYIV_TZ = pytz.timezone('Europe/Kyiv')
+except ImportError:
+    logger.warning("⚠️ Бібліотека pytz не встановлена, використовую UTC")
+    KYIV_TZ = None
 
 def get_kyiv_time():
     """Повертає поточний час у Києві"""
-    return datetime.now(KYIV_TZ)
+    if KYIV_TZ:
+        return datetime.now(KYIV_TZ)
+    return datetime.now()
 
 def format_kyiv_time(dt_str):
     """Форматує час з бази даних у київський час"""
@@ -49,10 +56,10 @@ def format_kyiv_time(dt_str):
             dt = dt_str
         else:
             dt = datetime.strptime(str(dt_str)[:19], '%Y-%m-%d %H:%M:%S')
-        if dt.tzinfo is None:
+        if KYIV_TZ and dt.tzinfo is None:
             dt = pytz.UTC.localize(dt)
-        kyiv_dt = dt.astimezone(KYIV_TZ)
-        return kyiv_dt.strftime('%Y-%m-%d %H:%M:%S')
+            dt = dt.astimezone(KYIV_TZ)
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
     except:
         return str(dt_str)[:16]
 
@@ -262,6 +269,7 @@ os.makedirs(REPORTS_DIR, exist_ok=True)
 admin_sessions = {}
 last_password_check = {}
 orders_offset = {}  # Для пагінації замовлень
+messages_offset = {}  # Для пагінації повідомлень
 
 def is_authenticated(user_id: int) -> bool:
     """Перевіряє чи авторизований адмін"""
@@ -312,7 +320,7 @@ async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, orde
         message += f"\n🕒 <b>Час:</b> {format_kyiv_time(order_data.get('created_at'))}"
         
         keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📋 Переглянути", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}"),
+            InlineKeyboardButton("📋 Детально", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}"),
             InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_order_{order_id}_{order_data.get('order_type', 'regular')}")
         ]])
         
@@ -363,6 +371,7 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
         message += f"🕒 <b>Час:</b> {format_kyiv_time(message_data.get('created_at'))}"
         
         keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📋 Детально", callback_data=f"message_view_{message_data.get('id')}"),
             InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_user_{message_data.get('user_id')}")
         ]])
         
@@ -478,8 +487,12 @@ def get_recent_orders(hours: int = 1, min_count: int = 3):
     recent_orders = []
     for order in all_orders:
         try:
-            order_time = datetime.strptime(str(order['created_at'])[:19], '%Y-%m-%d %H:%M:%S')
-            order_time = KYIV_TZ.localize(order_time)
+            order_time_str = order.get('created_at', '')
+            if not order_time_str:
+                continue
+            order_time = datetime.strptime(str(order_time_str)[:19], '%Y-%m-%d %H:%M:%S')
+            if KYIV_TZ:
+                order_time = KYIV_TZ.localize(order_time)
             if order_time >= time_limit:
                 recent_orders.append(order)
         except:
@@ -737,8 +750,8 @@ async def notify_customer_about_status(context: ContextTypes.DEFAULT_TYPE, user_
 
 # ==================== ФУНКЦІЇ ДЛЯ ПОВІДОМЛЕНЬ ====================
 
-def get_all_messages(limit: int = 50):
-    """Отримати всі повідомлення від користувачів"""
+def get_all_messages(limit: int = 50, offset: int = 0):
+    """Отримати всі повідомлення від користувачів з пагінацією"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -748,8 +761,8 @@ def get_all_messages(limit: int = 50):
         cursor.execute('''
             SELECT * FROM messages 
             ORDER BY created_at DESC 
-            LIMIT %s
-        ''', (limit,))
+            LIMIT %s OFFSET %s
+        ''', (limit, offset))
         rows = cursor.fetchall()
         
         messages = []
@@ -766,6 +779,109 @@ def get_all_messages(limit: int = 50):
     finally:
         conn.close()
 
+def get_message_by_id(message_id: int):
+    """Отримати повідомлення за ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM messages WHERE id = %s', (message_id,))
+        row = cursor.fetchone()
+        if row:
+            msg = dict(row)
+            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
+            return msg
+        return None
+    except Exception as e:
+        logger.error(f"❌ Помилка отримання повідомлення: {e}")
+        logger.error(traceback.format_exc())
+        return None
+    finally:
+        conn.close()
+
+def get_recent_messages(hours: int = 24, min_count: int = 5):
+    """Отримує повідомлення за останні години, якщо менше min_count - додає ще"""
+    all_messages = get_all_messages(limit=100)
+    
+    kyiv_now = get_kyiv_time()
+    time_limit = kyiv_now - timedelta(hours=hours)
+    
+    recent_messages = []
+    for msg in all_messages:
+        try:
+            msg_time_str = msg.get('created_at', '')
+            if not msg_time_str:
+                continue
+            msg_time = datetime.strptime(str(msg_time_str)[:19], '%Y-%m-%d %H:%M:%S')
+            if KYIV_TZ:
+                msg_time = KYIV_TZ.localize(msg_time)
+            if msg_time >= time_limit:
+                recent_messages.append(msg)
+        except:
+            continue
+    
+    if len(recent_messages) < min_count:
+        # Додаємо ще останні повідомлення
+        additional = all_messages[:min_count]
+        for msg in additional:
+            if msg not in recent_messages:
+                recent_messages.append(msg)
+    
+    return recent_messages[:min_count]
+
+def get_more_messages(user_id: int, count: int = 5):
+    """Отримує наступні повідомлення для пагінації"""
+    if user_id not in messages_offset:
+        messages_offset[user_id] = 0
+    
+    offset = messages_offset[user_id]
+    messages = get_all_messages(limit=count, offset=offset)
+    messages_offset[user_id] = offset + len(messages)
+    
+    return messages
+
+def format_message_text(msg: dict) -> str:
+    """Форматує текст повідомлення для відображення"""
+    text = f"💬 <b>Повідомлення #{msg['id']}</b>\n\n"
+    text += f"👤 Клієнт: {msg['user_name']}\n"
+    text += f"📱 Username: @{msg['username']}\n"
+    text += f"🆔 ID: {msg['user_id']}\n"
+    text += f"📅 Час: {msg['created_at'][:16]}\n"
+    text += f"📝 Тип: {msg['message_type']}\n"
+    text += f"💬 Текст: {msg['text']}\n"
+    return text
+
+def get_messages_by_user(user_id: int):
+    """Отримати повідомлення конкретного користувача"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT * FROM messages 
+            WHERE user_id = %s 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        rows = cursor.fetchall()
+        
+        messages = []
+        for row in rows:
+            msg = dict(row)
+            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
+            messages.append(msg)
+        
+        return messages
+    except Exception as e:
+        logger.error(f"❌ Помилка отримання повідомлень користувача: {e}")
+        logger.error(traceback.format_exc())
+        return []
+    finally:
+        conn.close()
+
 def format_messages_text(messages: list) -> str:
     """Форматує повідомлення для відправки"""
     if not messages:
@@ -777,6 +893,8 @@ def format_messages_text(messages: list) -> str:
         text += f"📅 {msg['created_at'][:16]}\n"
         text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
         text += f"🆔 ID: {msg['user_id']}\n"
+        text += f"📋 Тип: {msg['message_type']}\n"
+        text += f"[Детально](message_{msg['id']})\n"
         text += f"{'─'*40}\n"
     
     if len(messages) > 20:
@@ -1005,7 +1123,8 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
         if last_order_date_str:
             try:
                 last_order_date = datetime.strptime(str(last_order_date_str)[:19], '%Y-%m-%d %H:%M:%S')
-                last_order_date = KYIV_TZ.localize(last_order_date)
+                if KYIV_TZ:
+                    last_order_date = KYIV_TZ.localize(last_order_date)
                 days_since_last = (get_kyiv_time() - last_order_date).days
             except:
                 days_since_last = 999
@@ -1185,36 +1304,45 @@ def get_statistics():
     try:
         cursor = conn.cursor()
         
+        # Загальна кількість замовлень (звичайні)
         cursor.execute("SELECT COUNT(*) FROM orders")
-        total_orders = cursor.fetchone()['count']
+        regular_orders = cursor.fetchone()['count'] or 0
         
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()['count']
-        
+        # Загальна кількість швидких замовлень
         cursor.execute("SELECT COUNT(*) FROM quick_orders")
-        total_quick_orders = cursor.fetchone()['count']
+        quick_orders_count = cursor.fetchone()['count'] or 0
         
+        # Загальна кількість користувачів
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()['count'] or 0
+        
+        # Загальна кількість повідомлень
         cursor.execute("SELECT COUNT(*) FROM messages")
-        total_messages = cursor.fetchone()['count']
+        total_messages = cursor.fetchone()['count'] or 0
         
+        # Загальна кількість відгуків
         cursor.execute("SELECT COUNT(*) FROM reviews")
-        total_reviews = cursor.fetchone()['count']
+        total_reviews = cursor.fetchone()['count'] or 0
         
-        cursor.execute("SELECT SUM(total) FROM orders")
-        total_revenue = cursor.fetchone()['sum'] or 0
+        # Сума замовлень (звичайні)
+        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM orders")
+        regular_revenue = cursor.fetchone()['coalesce'] or 0
         
-        cursor.execute("SELECT SUM(total) FROM quick_orders")
-        quick_revenue = cursor.fetchone()['sum'] or 0
+        # Сума швидких замовлень
+        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM quick_orders")
+        quick_revenue = cursor.fetchone()['coalesce'] or 0
         
-        total_all_orders = total_orders + total_quick_orders
-        total_all_revenue = total_revenue + quick_revenue
+        total_orders = regular_orders + quick_orders_count
+        total_revenue = regular_revenue + quick_revenue
         
-        avg_check = total_all_revenue / total_all_orders if total_all_orders > 0 else 0
+        avg_check = total_revenue / total_orders if total_orders > 0 else 0
         
+        # Статуси звичайних замовлень
         cursor.execute("SELECT status, COUNT(*) FROM orders GROUP BY status")
         rows = cursor.fetchall()
         orders_by_status = {row['status']: row['count'] for row in rows}
         
+        # Статуси швидких замовлень
         cursor.execute("SELECT status, COUNT(*) FROM quick_orders GROUP BY status")
         quick_rows = cursor.fetchall()
         for row in quick_rows:
@@ -1224,21 +1352,24 @@ def get_statistics():
             else:
                 orders_by_status[status] = row['count']
         
+        # Замовлення за останні 30 днів (звичайні)
         cursor.execute('''
-            SELECT COUNT(*), SUM(total) FROM orders 
+            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM orders 
             WHERE created_at >= NOW() - INTERVAL '30 days'
         ''')
-        last_30_days_orders = cursor.fetchone()
+        last_30_days_regular = cursor.fetchone()
         
+        # Замовлення за останні 30 днів (швидкі)
         cursor.execute('''
-            SELECT COUNT(*), SUM(total) FROM quick_orders 
+            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM quick_orders 
             WHERE created_at >= NOW() - INTERVAL '30 days'
         ''')
         last_30_days_quick = cursor.fetchone()
         
-        last_30_days_count = (last_30_days_orders['count'] or 0) + (last_30_days_quick['count'] or 0)
-        last_30_days_sum = (last_30_days_orders['sum'] or 0) + (last_30_days_quick['sum'] or 0)
+        last_30_days_count = (last_30_days_regular['coalesce'] or 0) + (last_30_days_quick['coalesce'] or 0)
+        last_30_days_sum = (last_30_days_regular['coalesce_2'] or 0) + (last_30_days_quick['coalesce_2'] or 0)
         
+        # Сегментація клієнтів
         users = get_all_users()
         segments = {
             "vip": 0,
@@ -1265,12 +1396,12 @@ def get_statistics():
                 segments["active"] += 1
         
         return {
-            "total_orders": total_all_orders,
+            "total_orders": total_orders,
             "total_users": total_users,
-            "total_quick_orders": total_quick_orders,
+            "total_quick_orders": quick_orders_count,
             "total_messages": total_messages,
             "total_reviews": total_reviews,
-            "total_revenue": total_all_revenue,
+            "total_revenue": total_revenue,
             "avg_check": avg_check,
             "orders_by_status": orders_by_status,
             "last_30_days_orders": last_30_days_count,
@@ -1679,10 +1810,11 @@ def generate_messages_report(messages: list, format: str = "txt"):
     elif format == "csv":
         output = StringIO()
         writer = csv.writer(output)
-        writer.writerow(['User ID', 'Імя', 'Username', 'Дата', 'Тип', 'Текст'])
+        writer.writerow(['ID Повідомлення', 'User ID', 'Імя', 'Username', 'Дата', 'Тип', 'Текст'])
         
         for msg in messages:
             writer.writerow([
+                msg['id'],
                 msg['user_id'],
                 msg['user_name'],
                 msg['username'],
@@ -1764,7 +1896,8 @@ def get_customers_menu():
 
 def get_messages_menu():
     keyboard = [
-        [{"text": "📋 Останні повідомлення", "callback_data": "recent_messages"}],
+        [{"text": "📋 Останні повідомлення", "callback_data": "admin_messages_recent"}],
+        [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
         [{"text": "📁 Всі повідомлення файлом", "callback_data": "messages_all_file"}],
         [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
@@ -1834,6 +1967,15 @@ def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
     ]
     return create_inline_keyboard(keyboard)
 
+def get_message_actions_menu(message_id: int, user_id: int):
+    keyboard = [
+        [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
+        [{"text": "📝 Відповісти", "callback_data": f"reply_user_{user_id}"}],
+        [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
+        [{"text": "🔙 Назад", "callback_data": "admin_messages"}]
+    ]
+    return create_inline_keyboard(keyboard)
+
 def get_customer_actions_menu(user_id: int):
     keyboard = [
         [{"text": "📋 Історія замовлень", "callback_data": f"customer_orders_{user_id}"}],
@@ -1864,6 +2006,14 @@ def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
     if has_more:
         buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
     buttons.append([{"text": "🔙 Назад до меню", "callback_data": "admin_orders"}])
+    return create_inline_keyboard(buttons)
+
+def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
+    """Клавіатура для пагінації повідомлень"""
+    buttons = []
+    if has_more:
+        buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": "admin_messages_more"}])
+    buttons.append([{"text": "🔙 Назад до меню", "callback_data": "admin_messages"}])
     return create_inline_keyboard(buttons)
 
 def get_reply_keyboard(order_id: int = None, user_id: int = None):
@@ -1939,9 +2089,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Сесія закінчилась\n\nНапишіть /start для повторного входу")
             return
         
-        # Скидаємо offset при новому запиті замовлень
-        if data == "admin_orders" or data == "admin_back_main":
+        # Скидаємо offset при новому запиті
+        if data == "admin_orders" or data == "admin_back_main" or data == "admin_messages":
             orders_offset.pop(user_id, None)
+            messages_offset.pop(user_id, None)
         
         # ===== ГОЛОВНЕ МЕНЮ =====
         if data == "admin_back_main":
@@ -2336,6 +2487,96 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
+        # ===== ПОВІДОМЛЕННЯ =====
+        elif data == "admin_messages":
+            await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
+            return
+        
+        elif data == "admin_messages_recent":
+            recent_messages = get_recent_messages(hours=24, min_count=5)
+            if not recent_messages:
+                text = "💬 Повідомлень за останню добу немає.\n\nПоказую останні повідомлення:"
+                recent_messages = get_all_messages(limit=5)
+            
+            if not recent_messages:
+                text = "💬 Повідомлень не знайдено."
+            else:
+                text = "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n"
+                for msg in recent_messages:
+                    text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                    text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                    text += f"📅 Час: {msg['created_at'][:16]}\n"
+                    text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                    text += f"[Детально](message_{msg['id']})\n"
+                    text += f"{'─'*40}\n"
+            
+            all_messages = get_all_messages(limit=5, offset=0)
+            has_more = len(all_messages) >= 5
+            
+            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
+            return
+        
+        elif data == "admin_messages_more":
+            more_messages = get_more_messages(user_id, count=5)
+            if not more_messages:
+                text = "💬 Більше повідомлень не знайдено."
+                await query.edit_message_text(text, reply_markup=get_back_keyboard("admin_messages"), parse_mode='HTML')
+                return
+            
+            text = "💬 <b>ЩЕ ПОВІДОМЛЕННЯ</b>\n\n"
+            for msg in more_messages:
+                text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                text += f"📅 Час: {msg['created_at'][:16]}\n"
+                text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                text += f"[Детально](message_{msg['id']})\n"
+                text += f"{'─'*40}\n"
+            
+            # Перевіряємо чи є ще повідомлення
+            next_messages = get_all_messages(limit=1, offset=messages_offset.get(user_id, 0))
+            has_more = len(next_messages) > 0
+            
+            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
+            return
+        
+        elif data == "admin_messages_all":
+            messages = get_all_messages(limit=20)
+            if not messages:
+                text = "💬 Повідомлень поки немає"
+            else:
+                text = format_messages_text(messages)
+            await query.edit_message_text(text, reply_markup=get_messages_back_keyboard(), parse_mode='HTML')
+            return
+        
+        elif data.startswith("message_view_"):
+            message_id = int(data.split("_")[2])
+            msg = get_message_by_id(message_id)
+            if not msg:
+                await query.edit_message_text("❌ Повідомлення не знайдено", reply_markup=get_messages_menu())
+                return
+            
+            text = format_message_text(msg)
+            await query.edit_message_text(
+                text,
+                reply_markup=get_message_actions_menu(message_id, msg['user_id']),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "messages_all_file":
+            messages = get_all_messages(limit=1000)
+            if not messages:
+                await query.edit_message_text("💬 Повідомлень поки немає", reply_markup=get_messages_back_keyboard())
+                return
+            file_data = generate_messages_report(messages, "txt")
+            await query.message.reply_document(
+                document=file_data,
+                filename=f"all_messages_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+                caption="💬 Всі повідомлення користувачів"
+            )
+            await query.edit_message_text("✅ Файл з повідомленнями згенеровано!", reply_markup=get_messages_back_keyboard())
+            return
+        
         # ===== КЛІЄНТИ =====
         elif data == "admin_customers":
             await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
@@ -2559,34 +2800,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = "❌ Користувача не знайдено"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        # ===== ПОВІДОМЛЕННЯ =====
-        elif data == "admin_messages":
-            await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
-            return
-        
-        elif data == "recent_messages":
-            messages = get_all_messages(limit=20)
-            if not messages:
-                text = "💬 Повідомлень поки немає"
-            else:
-                text = format_messages_text(messages)
-            await query.edit_message_text(text, reply_markup=get_messages_back_keyboard(), parse_mode='HTML')
-            return
-        
-        elif data == "messages_all_file":
-            messages = get_all_messages(limit=1000)
-            if not messages:
-                await query.edit_message_text("💬 Повідомлень поки немає", reply_markup=get_messages_back_keyboard())
-                return
-            file_data = generate_messages_report(messages, "txt")
-            await query.message.reply_document(
-                document=file_data,
-                filename=f"all_messages_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="💬 Всі повідомлення користувачів"
-            )
-            await query.edit_message_text("✅ Файл з повідомленнями згенеровано!", reply_markup=get_messages_back_keyboard())
             return
         
         # ===== РОЗСИЛКИ =====
@@ -3031,6 +3244,26 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"❌ Помилка при надсиланні: {e}",
                     reply_markup=get_order_status_keyboard(order_id, session.get("order_type", 'regular'))
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action == "reply_to_user":
+            customer_id = session.get("customer_id")
+            try:
+                await context.bot.send_message(
+                    chat_id=customer_id,
+                    text=f"📢 <b>Відповідь адміністратора</b>\n\n{text}",
+                    parse_mode='HTML'
+                )
+                await update.message.reply_text(
+                    "✅ Відповідь надіслано!",
+                    reply_markup=get_customer_actions_menu(customer_id)
+                )
+            except Exception as e:
+                await update.message.reply_text(
+                    f"❌ Помилка при надсиланні: {e}",
+                    reply_markup=get_customer_actions_menu(customer_id)
                 )
             admin_sessions[user_id].pop("action", None)
             return
