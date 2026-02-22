@@ -57,8 +57,11 @@ def format_kyiv_time(dt_str):
         else:
             dt = datetime.strptime(str(dt_str)[:19], '%Y-%m-%d %H:%M:%S')
         if KYIV_TZ and dt.tzinfo is None:
-            dt = pytz.UTC.localize(dt)
-            dt = dt.astimezone(KYIV_TZ)
+            try:
+                dt = pytz.UTC.localize(dt)
+                dt = dt.astimezone(KYIV_TZ)
+            except:
+                pass
         return dt.strftime('%Y-%m-%d %H:%M:%S')
     except:
         return str(dt_str)[:16]
@@ -492,7 +495,10 @@ def get_recent_orders(hours: int = 1, min_count: int = 3):
                 continue
             order_time = datetime.strptime(str(order_time_str)[:19], '%Y-%m-%d %H:%M:%S')
             if KYIV_TZ:
-                order_time = KYIV_TZ.localize(order_time)
+                try:
+                    order_time = KYIV_TZ.localize(order_time)
+                except:
+                    pass
             if order_time >= time_limit:
                 recent_orders.append(order)
         except:
@@ -816,7 +822,10 @@ def get_recent_messages(hours: int = 24, min_count: int = 5):
                 continue
             msg_time = datetime.strptime(str(msg_time_str)[:19], '%Y-%m-%d %H:%M:%S')
             if KYIV_TZ:
-                msg_time = KYIV_TZ.localize(msg_time)
+                try:
+                    msg_time = KYIV_TZ.localize(msg_time)
+                except:
+                    pass
             if msg_time >= time_limit:
                 recent_messages.append(msg)
         except:
@@ -845,12 +854,12 @@ def get_more_messages(user_id: int, count: int = 5):
 def format_message_text(msg: dict) -> str:
     """Форматує текст повідомлення для відображення"""
     text = f"💬 <b>Повідомлення #{msg['id']}</b>\n\n"
-    text += f"👤 Клієнт: {msg['user_name']}\n"
-    text += f"📱 Username: @{msg['username']}\n"
-    text += f"🆔 ID: {msg['user_id']}\n"
-    text += f"📅 Час: {msg['created_at'][:16]}\n"
-    text += f"📝 Тип: {msg['message_type']}\n"
-    text += f"💬 Текст: {msg['text']}\n"
+    text += f"👤 <b>Клієнт:</b> {msg['user_name']}\n"
+    text += f"📱 <b>Username:</b> @{msg['username']}\n"
+    text += f"🆔 <b>ID:</b> {msg['user_id']}\n"
+    text += f"📅 <b>Час:</b> {msg['created_at'][:16]}\n"
+    text += f"📝 <b>Тип:</b> {msg['message_type']}\n"
+    text += f"💬 <b>Текст:</b> {msg['text']}\n"
     return text
 
 def get_messages_by_user(user_id: int):
@@ -894,7 +903,6 @@ def format_messages_text(messages: list) -> str:
         text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
         text += f"🆔 ID: {msg['user_id']}\n"
         text += f"📋 Тип: {msg['message_type']}\n"
-        text += f"[Детально](message_{msg['id']})\n"
         text += f"{'─'*40}\n"
     
     if len(messages) > 20:
@@ -1124,7 +1132,10 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
             try:
                 last_order_date = datetime.strptime(str(last_order_date_str)[:19], '%Y-%m-%d %H:%M:%S')
                 if KYIV_TZ:
-                    last_order_date = KYIV_TZ.localize(last_order_date)
+                    try:
+                        last_order_date = KYIV_TZ.localize(last_order_date)
+                    except:
+                        pass
                 days_since_last = (get_kyiv_time() - last_order_date).days
             except:
                 days_since_last = 999
@@ -1158,6 +1169,8 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
     
     for user in users:
         try:
+            # Перевіряємо чи користувач ще активний (чи не заблокував бота)
+            await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
             await context.bot.send_message(
                 chat_id=user['user_id'],
                 text=f"📢 <b>Оголошення</b>\n\n{message}",
@@ -1166,7 +1179,11 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
             sent_count += 1
             await asyncio.sleep(0.05)
         except Exception as e:
-            logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
+            error_str = str(e)
+            if "Chat not found" in error_str or "bot was blocked" in error_str:
+                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
+            else:
+                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
             fail_count += 1
     
     return sent_count, fail_count
@@ -1189,6 +1206,8 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
             user_segment = get_customer_segment(user, all_orders)
             
             if segment == "all" or segment in user_segment:
+                # Перевіряємо чи користувач ще активний
+                await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
                 await context.bot.send_message(
                     chat_id=user['user_id'],
                     text=f"📢 <b>Оголошення</b>\n\n{message}",
@@ -1197,7 +1216,11 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
                 sent_count += 1
                 await asyncio.sleep(0.05)
         except Exception as e:
-            logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
+            error_str = str(e)
+            if "Chat not found" in error_str or "bot was blocked" in error_str:
+                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
+            else:
+                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
             fail_count += 1
     
     return sent_count, fail_count
@@ -1797,7 +1820,8 @@ def generate_messages_report(messages: list, format: str = "txt"):
         output.write("=" * 80 + "\n\n")
         
         for msg in messages:
-            output.write(f"ID: {msg['user_id']}\n")
+            output.write(f"ID: {msg['id']}\n")
+            output.write(f"User ID: {msg['user_id']}\n")
             output.write(f"Ім'я: {msg['user_name']}\n")
             output.write(f"Username: @{msg['username']}\n")
             output.write(f"Дата: {msg['created_at']}\n")
@@ -1969,8 +1993,8 @@ def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
 
 def get_message_actions_menu(message_id: int, user_id: int):
     keyboard = [
-        [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
         [{"text": "📝 Відповісти", "callback_data": f"reply_user_{user_id}"}],
+        [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
         [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
         [{"text": "🔙 Назад", "callback_data": "admin_messages"}]
     ]
@@ -2507,7 +2531,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
                     text += f"📅 Час: {msg['created_at'][:16]}\n"
                     text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-                    text += f"[Детально](message_{msg['id']})\n"
                     text += f"{'─'*40}\n"
             
             all_messages = get_all_messages(limit=5, offset=0)
@@ -2529,7 +2552,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
                 text += f"📅 Час: {msg['created_at'][:16]}\n"
                 text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-                text += f"[Детально](message_{msg['id']})\n"
                 text += f"{'─'*40}\n"
             
             # Перевіряємо чи є ще повідомлення
@@ -2544,8 +2566,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not messages:
                 text = "💬 Повідомлень поки немає"
             else:
-                text = format_messages_text(messages)
-            await query.edit_message_text(text, reply_markup=get_messages_back_keyboard(), parse_mode='HTML')
+                text = "💬 <b>ВСІ ПОВІДОМЛЕННЯ</b>\n\n"
+                for msg in messages:
+                    text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                    text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                    text += f"📅 Час: {msg['created_at'][:16]}\n"
+                    text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                    text += f"{'─'*40}\n"
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_messages")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             return
         
         elif data.startswith("message_view_"):
@@ -2560,6 +2589,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text,
                 reply_markup=get_message_actions_menu(message_id, msg['user_id']),
                 parse_mode='HTML'
+            )
+            return
+        
+        elif data.startswith("reply_user_"):
+            user_id_to_reply = int(data.split("_")[2])
+            user_data = get_user_by_id(user_id_to_reply)
+            
+            admin_sessions[user_id] = {
+                "state": "authenticated",
+                "action": "reply_to_user",
+                "customer_id": user_id_to_reply
+            }
+            await query.edit_message_text(
+                f"📝 Відповідь користувачу {user_data['first_name'] if user_data else '#'}{user_id_to_reply}\n\nВведіть текст повідомлення:",
+                reply_markup=get_back_keyboard("admin_messages")
             )
             return
         
@@ -2748,6 +2792,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"{order_type} №{order_id} | {created_at}\n"
                     text += f"Сума: {order.get('total', 0):.2f} грн\n"
                     text += f"Статус: {order.get('status', 'нове')}\n"
+                    if order.get('order_type') == 'quick' and order.get('message'):
+                        text += f"💬 {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
                     text += f"{'─'*30}\n"
             
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
@@ -2761,11 +2807,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not messages:
                 text = "💬 Повідомлення\n\nУ клієнта немає повідомлень."
             else:
-                text = f"💬 ОСТАННІ ПОВІДОМЛЕННЯ\n\n"
+                text = f"💬 ПОВІДОМЛЕННЯ КЛІЄНТА\n\n"
                 for msg in messages[:10]:
                     created_at = msg.get('created_at', '')[:16]
                     text += f"📅 {created_at}\n"
-                    text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                    text += f"📝 {msg['text']}\n"
                     text += f"{'─'*30}\n"
             
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
@@ -3173,6 +3219,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     response += f"№{order_id} | {created_at}\n"
                     response += f"Сума: {order.get('total', 0):.2f} грн\n"
                     response += f"Статус: {order.get('status', 'нове')}\n"
+                    if order.get('order_type') == 'quick' and order.get('message'):
+                        response += f"💬 {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
                     response += f"{'─'*30}\n"
                 keyboard = []
                 for order in orders[:10]:
