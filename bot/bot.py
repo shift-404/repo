@@ -20,8 +20,6 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ==================== НАСТРОЙКА ЛОГГИРОВАНИЯ ====================
-
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -29,30 +27,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ==================== ПОЛУЧЕНИЕ ТОКЕНОВ ====================
-
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    logger.error("❌ BOT_TOKEN не знайдено! Додайте BOT_TOKEN в змінні середовища")
+    logger.error("BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not ADMIN_BOT_TOKEN:
-    logger.error("❌ ADMIN_BOT_TOKEN не знайдено! Додайте ADMIN_BOT_TOKEN в змінні середовища")
+    logger.error("ADMIN_BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 logger.info(f"✅ Токен основного бота отримано: {TOKEN[:4]}...{TOKEN[-4:]}")
 logger.info(f"✅ Токен адмін-бота отримано: {ADMIN_BOT_TOKEN[:4]}...{ADMIN_BOT_TOKEN[-4:]}")
 
-# ==================== ПІДКЛЮЧЕННЯ ДО POSTGRESQL ====================
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL не знайдено! Додайте змінну середовища")
+    logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
 def get_db_connection():
-    """Підключення до PostgreSQL"""
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
@@ -60,10 +53,7 @@ def get_db_connection():
         logger.error(f"❌ Помилка підключення до БД: {e}")
         return None
 
-# ==================== ІНІЦІАЛІЗАЦІЯ БАЗИ ДАНИХ ====================
-
 def init_database():
-    """Створення таблиць в PostgreSQL"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -165,19 +155,8 @@ def init_database():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
+                image_url TEXT,
                 details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                user_name TEXT,
-                order_id INTEGER,
-                text TEXT,
-                rating INTEGER DEFAULT 5,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -191,9 +170,13 @@ def init_database():
             )
         ''')
         
-        # Додаємо колонку message до quick_orders якщо її немає
         try:
             cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
+        except:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
         except:
             pass
         
@@ -204,21 +187,21 @@ def init_database():
             products = [
                 (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                 "банка", "🥫", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
                 
                 (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                 "банка", "🌶️", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
                 
                 (3, "Паштет з артишоку", 290, "паштети",
                  "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+                 "банка", "🍯", None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
             ]
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_url, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
         
@@ -231,8 +214,6 @@ def init_database():
     finally:
         conn.close()
 
-# ==================== ШЛЯХИ ДЛЯ ЛОГІВ ====================
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -241,8 +222,6 @@ ORDERS_LOG = os.path.join(LOGS_DIR, "orders.txt")
 USERS_LOG = os.path.join(LOGS_DIR, "users.txt")
 MESSAGES_LOG = os.path.join(LOGS_DIR, "messages.txt")
 QUICK_ORDERS_LOG = os.path.join(LOGS_DIR, "quick_orders.txt")
-
-# ==================== ФУНКЦІЇ ЛОГУВАННЯ ====================
 
 def log_order(order_data: dict):
     try:
@@ -302,8 +281,6 @@ def log_quick_order(order_data: dict):
     except Exception as e:
         logger.error(f"Помилка запису швидкого замовлення: {e}")
 
-# ==================== ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ====================
-
 def check_single_instance():
     import socket
     try:
@@ -312,21 +289,18 @@ def check_single_instance():
         result = sock.connect_ex(('127.0.0.1', 9999))
         sock.close()
         if result == 0:
-            logger.error("⚠️ Другой экземпляр бота уже запущен!")
+            logger.error("⚠️ Другий екземпляр бота вже запущено!")
             return False
         return True
     except Exception as e:
-        logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
+        logger.error(f"⚠️ Помилка перевірки екземпляра: {e}")
         return True
 
-# ==================== ФУНКЦІЇ ДЛЯ СПОВІЩЕНЬ АДМІНАМ (ВИПРАВЛЕНО) ====================
-
 async def notify_admins_about_new_order(order_data: dict):
-    """Відправляє сповіщення всім адмінам про нове замовлення в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -335,7 +309,7 @@ async def notify_admins_about_new_order(order_data: dict):
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
         order_type = "⚡ ШВИДКЕ" if order_data.get('order_type') == 'quick' else "📦 ЗВИЧАЙНЕ"
@@ -363,13 +337,11 @@ async def notify_admins_about_new_order(order_data: dict):
         
         message += f"\n🕒 <b>Час:</b> {order_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
             try:
-                # Відправляємо через адмін-бота
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
@@ -378,19 +350,18 @@ async def notify_admins_about_new_order(order_data: dict):
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам через адмін-бота")
+        logger.info(f"Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в notify_admins_about_new_order: {e}")
+        logger.error(f"Помилка в notify_admins_about_new_order: {e}")
 
 async def notify_admins_about_message(message_data: dict):
-    """Відправляє сповіщення всім адмінам про нове повідомлення від користувача в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -399,7 +370,7 @@ async def notify_admins_about_message(message_data: dict):
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
         message = f"💬 <b>НОВЕ ПОВІДОМЛЕННЯ</b>\n\n"
@@ -409,13 +380,11 @@ async def notify_admins_about_message(message_data: dict):
         message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
         message += f"🕒 <b>Час:</b> {message_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
             try:
-                # Відправляємо через адмін-бота
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
@@ -424,19 +393,18 @@ async def notify_admins_about_message(message_data: dict):
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про повідомлення відправлено {sent_count} адмінам через адмін-бота")
+        logger.info(f"Сповіщення про повідомлення відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
+        logger.error(f"Помилка в notify_admins_about_message: {e}")
 
 async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
-    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -445,10 +413,9 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
-        # Формуємо ОДНЕ об'єднане повідомлення
         message = f"🆕 <b>НОВЕ ⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
         message += f"👤 <b>Клієнт:</b> {user_name}\n"
         message += f"📱 <b>Username:</b> @{username}\n"
@@ -458,13 +425,11 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         message += f"📝 <b>Повідомлення:</b> {message_text}\n"
         message += f"🕒 <b>Час:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
             try:
-                # Відправляємо через адмін-бота
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
@@ -473,17 +438,14 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам через адмін-бота")
+        logger.info(f"Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
-
-# ==================== КЛАС DATABASE ====================
+        logger.error(f"Помилка в send_combined_quick_order_notification: {e}")
 
 class Database:
-    """Клас для роботи з PostgreSQL"""
     
     @staticmethod
     def get_connection():
@@ -507,7 +469,7 @@ class Database:
             ''', (user_id, first_name, last_name, username))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения пользователя: {e}")
+            logger.error(f"Помилка збереження користувача: {e}")
         finally:
             conn.close()
     
@@ -532,7 +494,7 @@ class Database:
                 return {"state": state, "temp_data": temp_data, "last_section": last_section}
             return {"state": "", "temp_data": {}, "last_section": "main_menu"}
         except Exception as e:
-            logger.error(f"❌ Ошибка получения сессии: {e}")
+            logger.error(f"Помилка отримання сесії: {e}")
             return {"state": "", "temp_data": {}, "last_section": "main_menu"}
         finally:
             conn.close()
@@ -557,7 +519,7 @@ class Database:
             ''', (user_id, state, temp_data_json, last_section))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения сессии: {e}")
+            logger.error(f"Помилка збереження сесії: {e}")
         finally:
             conn.close()
     
@@ -571,7 +533,7 @@ class Database:
             cursor.execute('DELETE FROM user_sessions WHERE user_id = %s', (user_id,))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка очистки сессии: {e}")
+            logger.error(f"Помилка очищення сесії: {e}")
         finally:
             conn.close()
     
@@ -606,7 +568,7 @@ class Database:
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"❌ Ошибка добавления в корзину: {e}")
+            logger.error(f"Помилка додавання в корзину: {e}")
             return False
         finally:
             conn.close()
@@ -634,7 +596,7 @@ class Database:
                     })
             return items
         except Exception as e:
-            logger.error(f"❌ Ошибка получения корзины: {e}")
+            logger.error(f"Помилка отримання корзини: {e}")
             return []
         finally:
             conn.close()
@@ -649,7 +611,7 @@ class Database:
             cursor.execute('DELETE FROM carts WHERE user_id = %s', (user_id,))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка очистки корзины: {e}")
+            logger.error(f"Помилка очищення корзини: {e}")
         finally:
             conn.close()
     
@@ -663,7 +625,7 @@ class Database:
             cursor.execute('DELETE FROM carts WHERE id = %s', (cart_id,))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка удаления из корзины: {e}")
+            logger.error(f"Помилка видалення з корзини: {e}")
         finally:
             conn.close()
     
@@ -702,10 +664,10 @@ class Database:
             
             cursor.execute('DELETE FROM carts WHERE user_id = %s', (order_data.get("user_id"),))
             conn.commit()
-            logger.info(f"✅ Заказ #{order_id} создан успешно")
+            logger.info(f"✅ Замовлення #{order_id} створено успішно")
             return order_id
         except Exception as e:
-            logger.error(f"❌ Ошибка создания заказа: {e}")
+            logger.error(f"Помилка створення замовлення: {e}")
             return 0
         finally:
             conn.close()
@@ -723,7 +685,7 @@ class Database:
             ''', (user_id, user_name, username, text, message_type))
             conn.commit()
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения сообщения: {e}")
+            logger.error(f"Помилка збереження повідомлення: {e}")
         finally:
             conn.close()
     
@@ -747,30 +709,11 @@ class Database:
             result = cursor.fetchone()
             order_id = result['id'] if result else 0
             conn.commit()
-            logger.info(f"✅ Быстрый заказ #{order_id} сохранен")
+            logger.info(f"✅ Швидке замовлення #{order_id} збережено")
             return order_id
         except Exception as e:
-            logger.error(f"❌ Ошибка сохранения быстрого заказа: {e}")
+            logger.error(f"Помилка збереження швидкого замовлення: {e}")
             return 0
-        finally:
-            conn.close()
-    
-    @staticmethod
-    def save_review(user_id: int, user_name: str, order_id: int, text: str, rating: int = 5):
-        conn = Database.get_connection()
-        if not conn:
-            return False
-        try:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO reviews (user_id, user_name, order_id, text, rating)
-                VALUES (%s, %s, %s, %s, %s)
-            ''', (user_id, user_name, order_id, text, rating))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"❌ Ошибка сохранения отзыва: {e}")
-            return False
         finally:
             conn.close()
     
@@ -794,8 +737,6 @@ class Database:
             quick_orders = cursor.fetchone()['count']
             cursor.execute("SELECT SUM(total) FROM orders")
             total_revenue = cursor.fetchone()['sum'] or 0
-            cursor.execute("SELECT COUNT(*) FROM reviews")
-            total_reviews = cursor.fetchone()['count']
             
             return {
                 "total_orders": total_orders,
@@ -803,11 +744,10 @@ class Database:
                 "total_users": total_users,
                 "active_carts": active_carts,
                 "quick_orders": quick_orders,
-                "total_revenue": total_revenue,
-                "total_reviews": total_reviews
+                "total_revenue": total_revenue
             }
         except Exception as e:
-            logger.error(f"❌ Ошибка получения статистики: {e}")
+            logger.error(f"Помилка отримання статистики: {e}")
             return {}
         finally:
             conn.close()
@@ -833,11 +773,12 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
+                    "image_url": row.get('image_url'),
                     "details": row['details']
                 })
             return products
         except Exception as e:
-            logger.error(f"❌ Ошибка получения товаров: {e}")
+            logger.error(f"Помилка отримання товарів: {e}")
             return []
         finally:
             conn.close()
@@ -868,7 +809,6 @@ class Database:
             orders = []
             for row in rows:
                 order = dict(row)
-                # Конвертуємо datetime в рядок безпечно
                 created_at = order.get('created_at')
                 if created_at and hasattr(created_at, 'strftime'):
                     created_at_str = created_at.strftime('%Y-%m-%d %H:%M:%S')
@@ -890,12 +830,10 @@ class Database:
                 })
             return orders
         except Exception as e:
-            logger.error(f"❌ Ошибка получения заказов пользователя: {e}")
+            logger.error(f"Помилка отримання замовлень користувача: {e}")
             return []
         finally:
             conn.close()
-
-# ==================== ДАНІ ПРОДУКТІВ ====================
 
 def get_products_from_db():
     return Database.get_all_products()
@@ -908,8 +846,6 @@ def refresh_products():
     logger.info(f"🔄 Оновлено товари: {len(PRODUCTS)} позицій")
 
 refresh_products()
-
-# ==================== ОНОВЛЕНИЙ СПИСОК FAQ (ТІЛЬКИ 2 ПИТАННЯ) ====================
 
 FAQS = [
     {
@@ -933,8 +869,6 @@ COMPANY_INFO = {
         "🚚 Доставка: Новою Поштою по всій Україні"
     ]
 }
-
-# ==================== ГЕНЕРАТОРИ КЛАВІАТУР ====================
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
     keyboard = []
@@ -971,8 +905,11 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
+        button_text = f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}"
+        if product.get('image_url'):
+            button_text = f"🖼️ {product['name']} - {product['price']} грн/{product['unit']}"
         buttons.append([{
-            "text": f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}",
+            "text": button_text,
             "callback_data": f"product_{product['id']}"
         }])
     buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
@@ -1047,8 +984,6 @@ def get_my_orders_menu(orders: List) -> InlineKeyboardMarkup:
     buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
 
-# ==================== УТІЛІТИ ДЛЯ ВАЛІДАЦІЇ ====================
-
 def parse_quantity(text: str) -> Tuple[bool, float, str]:
     text = text.strip().replace(" ", "")
     match = re.search(r'(\d+(?:[.,]\d+)?)', text)
@@ -1081,8 +1016,6 @@ def validate_phone(phone: str) -> Tuple[bool, str]:
             phone = "+380" + phone[1:] if phone.startswith("+") else "+380" + phone
         return True, phone
     return False, phone
-
-# ==================== ГЕНЕРАТОРИ ТЕКСТУ ====================
 
 def get_welcome_text() -> str:
     return """
@@ -1129,7 +1062,7 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    return f"""
+    text = f"""
 <b>{product['image']} {product['name']}</b>
 
 📝 <i>{product['description']}</i>
@@ -1150,6 +1083,7 @@ def get_product_text(product_id: int) -> str:
 <b>💡 Як використовувати:</b>
 Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
     """
+    return text
 
 def get_quick_order_text(product_id: int) -> str:
     refresh_products()
@@ -1233,8 +1167,6 @@ def get_my_orders_text(orders: List[Dict]) -> str:
         text += f"{'─'*40}\n"
     return text
 
-# ==================== TELEGRAM HANDLERS ====================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
@@ -1257,7 +1189,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         Database.save_user_session(user_id, last_section="main_menu")
         
     except Exception as e:
-        logger.error(f"❌ ОШИБКА В start: {e}")
+        logger.error(f"❌ Помилка в start: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("ℹ️ Допомога: оберіть опцію з меню", reply_markup=get_main_menu())
@@ -1329,8 +1261,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("product_"):
             product_id = int(data.split("_")[1])
+            product = get_product_by_id(product_id)
             product_text = get_product_text(product_id)
-            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            
+            if product and product.get('image_url'):
+                try:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=product['image_url'],
+                        caption=product_text,
+                        parse_mode='HTML',
+                        reply_markup=get_product_detail_menu(product_id)
+                    )
+                    await query.message.delete()
+                except:
+                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            else:
+                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            
             Database.save_user_session(user_id, last_section=f"product_{product_id}")
         
         elif data.startswith("add_to_cart_"):
@@ -1384,7 +1332,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
-        # ==================== ВИПРАВЛЕНИЙ ОБРОБНИК quick_chat_ ====================
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
             refresh_products()
@@ -1397,7 +1344,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
             username = user.username or 'немає'
             
-            # Створюємо швидке замовлення без повідомлення
             order_id = Database.save_quick_order(
                 user_id=user_id,
                 user_name=user_name,
@@ -1410,8 +1356,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message=None
             )
             
-            # НЕ відправляємо сповіщення зараз - будемо чекати повідомлення
-            # Зберігаємо ID замовлення в сесію, щоб потім прив'язати повідомлення
             Database.save_user_session(user_id, "waiting_message_for_quick_order", {"order_id": order_id, "product_name": product['name']})
             
             response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
@@ -1431,9 +1375,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"📦 Продукт: {product['name']}")
             logger.info(f"🆔 User ID: {user_id}")
             logger.info(f"{'='*80}\n")
-            
-            # НЕ очищаємо сесію - залишаємо для отримання повідомлення
-            
+        
         elif data == "faq":
             faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
             await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
@@ -1458,7 +1400,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("user_order_"):
             order_id = int(data.split("_")[2])
-            # Тут має бути отримання конкретного замовлення з БД
             await query.edit_message_text(
                 f"📋 Деталі замовлення #{order_id} (в розробці)",
                 reply_markup=get_back_keyboard("my_orders")
@@ -1521,7 +1462,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
                 contact_info += "✅ <code>+380932599103</code>\n\n"
                 contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
-            else:  # our_address
+            else:
                 contact_info = "📍 <b>Наша адреса:</b>\n\n"
                 contact_info += "🏠 Одеська область\n"
                 contact_info += "📌 село Великий Дальник\n"
@@ -1540,7 +1481,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if order_id > 0:
                         logger.info(f"\n{'='*80}")
-                        logger.info(f"✅ НОВИЙ ЗАМОВЛЕННЯ #{order_id}:")
+                        logger.info(f"✅ НОВЕ ЗАМОВЛЕННЯ #{order_id}:")
                         logger.info(f"👤 Клієнт: {temp_data.get('user_name', '')}")
                         logger.info(f"📞 Телефон: {temp_data.get('phone', '')}")
                         logger.info(f"🏙️ Місто: {temp_data.get('city', '')}")
@@ -1555,7 +1496,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         temp_data["order_type"] = "regular"
                         log_order(temp_data)
                         
-                        # Відправляємо сповіщення адмінам
                         await notify_admins_about_new_order(temp_data)
                         
                         Database.clear_user_session(user_id)
@@ -1575,7 +1515,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         text += "<i>Вибачте за незручності.</i>"
                         Database.clear_user_session(user_id)
                 except Exception as e:
-                    logger.error(f"❌ Ошибка при создании заказа: {e}")
+                    logger.error(f"❌ Помилка при створенні замовлення: {e}")
                     text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
                     text += "Будь ласка, спробуйте ще раз.\n\n"
                     text += "<i>Вибачте за незручності.</i>"
@@ -1596,7 +1536,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             Database.save_user_session(user_id, last_section="main_menu")
             
     except Exception as e:
-        logger.error(f"❌ Ошибка обработки callback: {e}")
+        logger.error(f"❌ Помилка обробки callback: {e}")
         try:
             text = "❌ <b>Сталася помилка</b>\n\n"
             text += "Будь ласка, спробуйте ще раз або використайте /start"
@@ -1676,7 +1616,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_message(user_id, user_name, username, text, "повідомлення з меню")
             
-            # Відправляємо сповіщення адмінам
             message_data = {
                 "user_id": user_id,
                 "user_name": user_name,
@@ -1706,14 +1645,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             Database.clear_user_session(user_id)
             Database.save_user_session(user_id, last_section="main_menu")
         
-        # ==================== НОВИЙ ОБРОБНИК ДЛЯ ШВИДКОГО ЗАМОВЛЕННЯ ====================
         elif state == "waiting_message_for_quick_order":
             order_id = temp_data.get("order_id")
             product_name = temp_data.get("product_name")
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
             username = user.username or 'немає'
             
-            # Оновлюємо швидке замовлення - додаємо повідомлення
             conn = get_db_connection()
             if conn:
                 try:
@@ -1729,10 +1666,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 finally:
                     conn.close()
             
-            # Зберігаємо повідомлення в таблицю messages
             Database.save_message(user_id, user_name, username, text, "швидке замовлення")
             
-            # Відправляємо ОДНЕ об'єднане сповіщення адмінам через адмін-бота
             await send_combined_quick_order_notification(order_id, user_id, user_name, username, product_name, text)
             
             log_quick_order({
@@ -1871,7 +1806,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 0, formatted_phone, "call", None
             )
             
-            # Відправляємо сповіщення адмінам через адмін-бота
             order_data = {
                 "id": order_id,
                 "order_type": "quick",
@@ -1925,7 +1859,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
             
-            # Відправляємо сповіщення адмінам через адмін-бота
             message_data = {
                 "user_id": user_id,
                 "user_name": user_name,
@@ -1946,16 +1879,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             Database.save_user_session(user_id, last_section="main_menu")
             
     except Exception as e:
-        logger.error(f"❌ ОШИБКА В message_handler: {e}")
-
-# ==================== ОБРАБОТЧИК ОШИБОК ====================
+        logger.error(f"❌ Помилка в message_handler: {e}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        logger.error(f"⚠️ Ошибка во время обработки обновления {update}: {context.error}")
+        logger.error(f"⚠️ Помилка під час обробки оновлення {update}: {context.error}")
         
         if 'Conflict' in str(context.error):
-            logger.warning("🔄 Обнаружен конфликт - возможно запущен дублирующий бот")
+            logger.warning("🔄 Виявлено конфлікт - можливо запущено дублюючий бот")
             return
         
         if update and update.effective_chat:
@@ -1968,20 +1899,18 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except:
                 pass
     except Exception as e:
-        logger.error(f"❌ Ошибка в обработчике ошибок: {e}")
-
-# ==================== ЗАПУСК БОТА ====================
+        logger.error(f"❌ Помилка в обробнику помилок: {e}")
 
 def main():
     try:
         if not check_single_instance():
-            logger.error("🚫 Бот уже запущен в другом процессе! Завершаем...")
+            logger.error("🚫 Бот вже запущено в іншому процесі! Завершуємо...")
             sys.exit(1)
         
         time.sleep(2)
         
         if not init_database():
-            logger.error("❌ Не удалось инициализировать базу данных")
+            logger.error("❌ Не вдалося ініціалізувати базу даних")
             return
         
         refresh_products()
@@ -1999,7 +1928,6 @@ def main():
         logger.info(f"• Активних кошиків: {stats.get('active_carts', 0)}")
         logger.info(f"• Продуктів у базі: {len(PRODUCTS)}")
         logger.info(f"• Виручка: {stats.get('total_revenue', 0):.2f} грн")
-        logger.info(f"• Відгуків: {stats.get('total_reviews', 0)}")
         logger.info("=" * 80)
         logger.info("🔄 Очікування повідомлень...\n")
         
@@ -2026,7 +1954,7 @@ def main():
         )
         
     except Exception as e:
-        logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        logger.error(f"❌ КРИТИЧНА ПОМИЛКА: {e}")
         import traceback
         logger.error(traceback.format_exc())
         time.sleep(10)
