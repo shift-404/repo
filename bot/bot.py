@@ -1085,6 +1085,30 @@ def get_product_text(product_id: int) -> str:
     """
     return text
 
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (в коді основного бота додати обробку фото)
+    elif data.startswith("product_"):
+        product_id = int(data.split("_")[1])
+        product = get_product_by_id(product_id)
+        product_text = get_product_text(product_id)
+        
+        if product and product.get('image_url'):
+            try:
+                # Якщо є фото, відправляємо його
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=product['image_url'],
+                    caption=product_text,
+                    parse_mode='HTML',
+                    reply_markup=get_product_detail_menu(product_id)
+                )
+                await query.message.delete()
+            except:
+                # Якщо помилка з фото, відправляємо тільки текст
+                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+        else:
+            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+
 def get_quick_order_text(product_id: int) -> str:
     refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -1961,3 +1985,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
