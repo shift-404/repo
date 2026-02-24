@@ -144,6 +144,7 @@ def init_database():
                 product_name TEXT,
                 quantity REAL,
                 contact_method TEXT,
+                message TEXT,
                 status TEXT DEFAULT 'нове',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -183,6 +184,12 @@ def init_database():
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Додаємо колонку message до quick_orders якщо її немає
+        try:
+            cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
+        except:
+            pass
         
         cursor.execute("SELECT COUNT(*) FROM products")
         count = cursor.fetchone()['count']
@@ -307,7 +314,7 @@ def check_single_instance():
 
 # ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
 
-async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_data: dict):
+async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, order_data: dict):
     """Відправляє сповіщення всім адмінам про нове замовлення"""
     try:
         conn = get_db_connection()
@@ -324,20 +331,30 @@ async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_da
             logger.warning("⚠️ Немає адмінів для сповіщення")
             return
         
-        items_text = ""
-        for item in order_data.get('items', []):
-            items_text += f"  • {item.get('product_name')} x {item.get('quantity')} = {item.get('price') * item.get('quantity'):.2f} грн\n"
+        order_type = "⚡ ШВИДКЕ" if order_data.get('order_type') == 'quick' else "📦 ЗВИЧАЙНЕ"
+        order_id = order_data.get('order_id', order_data.get('id', 'Н/Д'))
         
-        message = f"🆕 <b>НОВЕ ЗАМОВЛЕННЯ #{order_data['order_id']}</b>\n\n"
-        message += f"👤 <b>Клієнт:</b> {order_data.get('user_name')}\n"
-        message += f"📞 <b>Телефон:</b> {order_data.get('phone')}\n"
-        message += f"🏙️ <b>Місто:</b> {order_data.get('city')}\n"
-        message += f"🏣 <b>Відділення НП:</b> {order_data.get('np_department')}\n"
-        message += f"{'─'*30}\n"
-        message += f"📦 <b>Товари:</b>\n{items_text}"
-        message += f"{'─'*30}\n"
-        message += f"💰 <b>Загальна сума:</b> {order_data.get('total'):.2f} грн\n\n"
-        message += f"🔍 <b>Переглянути в адмін-панелі</b>"
+        message = f"🆕 <b>НОВЕ {order_type} ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
+        message += f"👤 <b>Клієнт:</b> {order_data.get('user_name', 'Н/Д')}\n"
+        message += f"📞 <b>Телефон:</b> {order_data.get('phone', 'Н/Д')}\n"
+        
+        if order_data.get('order_type') == 'quick':
+            message += f"📦 <b>Продукт:</b> {order_data.get('product_name', 'Н/Д')}\n"
+            message += f"💬 <b>Спосіб зв'язку:</b> {order_data.get('contact_method', 'Н/Д')}\n"
+            if order_data.get('message'):
+                message += f"📝 <b>Повідомлення:</b> {order_data.get('message')}\n"
+        else:
+            message += f"🏙️ <b>Місто:</b> {order_data.get('city', 'Н/Д')}\n"
+            message += f"🏣 <b>Відділення НП:</b> {order_data.get('np_department', 'Н/Д')}\n"
+            message += f"💰 <b>Сума:</b> {order_data.get('total', 0):.2f} грн\n"
+            
+            items_text = ""
+            for item in order_data.get('items', []):
+                items_text += f"  • {item.get('product_name')} x {item.get('quantity')} = {item.get('price_per_unit', 0) * item.get('quantity', 0):.2f} грн\n"
+            if items_text:
+                message += f"📦 <b>Товари:</b>\n{items_text}"
+        
+        message += f"\n🕒 <b>Час:</b> {order_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
         sent_count = 0
         for admin in admins:
@@ -352,10 +369,52 @@ async def notify_admins_about_order(context: ContextTypes.DEFAULT_TYPE, order_da
             except Exception as e:
                 logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про замовлення #{order_data['order_id']} відправлено {sent_count} адмінам")
+        logger.info(f"✅ Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в notify_admins_about_order: {e}")
+        logger.error(f"❌ Помилка в notify_admins_about_new_order: {e}")
+
+async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, message_data: dict):
+    """Відправляє сповіщення всім адмінам про нове повідомлення від користувача"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            return
+        
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM admins")
+        admins = cursor.fetchall()
+        conn.close()
+        
+        if not admins:
+            logger.warning("⚠️ Немає адмінів для сповіщення")
+            return
+        
+        message = f"💬 <b>НОВЕ ПОВІДОМЛЕННЯ</b>\n\n"
+        message += f"👤 <b>Клієнт:</b> {message_data.get('user_name', 'Н/Д')}\n"
+        message += f"📱 <b>Username:</b> @{message_data.get('username', 'Н/Д')}\n"
+        message += f"🆔 <b>User ID:</b> {message_data.get('user_id', 'Н/Д')}\n"
+        message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
+        message += f"🕒 <b>Час:</b> {message_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
+        
+        sent_count = 0
+        for admin in admins:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin['user_id'],
+                    text=message,
+                    parse_mode='HTML'
+                )
+                sent_count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+        
+        logger.info(f"✅ Сповіщення про повідомлення відправлено {sent_count} адмінам")
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
 
 # ==================== КЛАС DATABASE ====================
 
@@ -607,7 +666,7 @@ class Database:
     @staticmethod
     def save_quick_order(user_id: int, user_name: str, username: str, product_id: int, 
                         product_name: str, quantity: float, phone: str = None, 
-                        contact_method: str = "chat") -> int:
+                        contact_method: str = "chat", message: str = None) -> int:
         conn = Database.get_connection()
         if not conn:
             return 0
@@ -616,10 +675,10 @@ class Database:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO quick_orders (user_id, user_name, username, product_id, product_name, 
-                                        quantity, phone, contact_method, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        quantity, phone, contact_method, message, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method, "нове"))
+            ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method, message, "нове"))
             
             result = cursor.fetchone()
             order_id = result['id'] if result else 0
@@ -1152,7 +1211,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
         
-        chat_id = update.effective_chat.id  # ← ВИПРАВЛЕНО: додано chat_id
+        chat_id = update.effective_chat.id
         user = query.from_user
         user_id = user.id
         data = query.data
@@ -1227,7 +1286,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "📊 <b>Введіть кількість (тільки число):</b>\n\n"
             response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
             
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
         elif data.startswith("quick_order_"):
             product_id = int(data.split("_")[2])
@@ -1259,7 +1318,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<i>Приклад: +380932599103 або 0932599103</i>\n\n"
             response += "<b>Ми зателефонуємо вам для уточнення деталей замовлення!</b>"
             
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
@@ -1281,8 +1340,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 product_name=product['name'],
                 quantity=0,
                 phone=None,
-                contact_method="chat"
+                contact_method="chat",
+                message=None
             )
+            
+            # Відправляємо сповіщення адмінам
+            order_data = {
+                "id": order_id,
+                "order_type": "quick",
+                "user_name": user_name,
+                "username": username,
+                "phone": None,
+                "product_name": product['name'],
+                "contact_method": "chat",
+                "user_id": user_id,
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_new_order(context, order_data)
             
             response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
@@ -1293,7 +1367,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "• Бажаний час доставки\n\n"
             response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
             
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             
             logger.info(f"\n{'='*80}")
             logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ):")
@@ -1373,7 +1447,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "📝 <b>Введіть ваше ПІБ (повне ім'я):</b>\n\n"
             response += "<i>Наприклад: Іванов Іван Іванович</i>"
             
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
         elif data == "clear_cart":
             Database.clear_cart(user_id)
@@ -1397,7 +1471,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "• Пропозиції співпраці\n"
             response += "• Інші питання\n\n"
             response += "<i>Ми відповімо вам найближчим часом!</i>"
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')  # ← ВИПРАВЛЕНО
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
         elif data in ["call_us", "our_address"]:
             if data == "call_us":
@@ -1435,10 +1509,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         temp_data["order_id"] = order_id
                         temp_data["status"] = "нове"
+                        temp_data["order_type"] = "regular"
                         log_order(temp_data)
                         
                         # Відправляємо сповіщення адмінам
-                        await notify_admins_about_order(context, temp_data)
+                        await notify_admins_about_new_order(context, temp_data)
                         
                         Database.clear_user_session(user_id)
                         
@@ -1558,13 +1633,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_message(user_id, user_name, username, text, "повідомлення з меню")
             
-            log_message({
+            # Відправляємо сповіщення адмінам
+            message_data = {
                 "user_id": user_id,
                 "user_name": user_name,
                 "username": username,
                 "text": text,
-                "message_type": "повідомлення з меню"
-            })
+                "message_type": "повідомлення з меню",
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_message(context, message_data)
+            
+            log_message(message_data)
             
             logger.info(f"\n{'='*80}")
             logger.info(f"💬 НОВЕ ПОВІДОМЛЕННЯ:")
@@ -1685,8 +1765,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             order_id = Database.save_quick_order(
                 user_id, user_name, username, product_id, product["name"], 
-                0, formatted_phone, "call"
+                0, formatted_phone, "call", None
             )
+            
+            # Відправляємо сповіщення адмінам
+            order_data = {
+                "id": order_id,
+                "order_type": "quick",
+                "user_name": user_name,
+                "username": username,
+                "phone": formatted_phone,
+                "product_name": product['name'],
+                "contact_method": "call",
+                "user_id": user_id,
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_new_order(context, order_data)
             
             log_quick_order({
                 "order_id": order_id,
@@ -1727,13 +1821,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
             
-            log_message({
+            # Відправляємо сповіщення адмінам
+            message_data = {
                 "user_id": user_id,
                 "user_name": user_name,
                 "username": username,
                 "text": text,
-                "message_type": "повідомлення в чаті"
-            })
+                "message_type": "повідомлення в чаті",
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_message(context, message_data)
+            
+            log_message(message_data)
             
             response = "✅ <b>Повідомлення отримано!</b>\n\n"
             response += "Ми відповімо вам найближчим часом.\n"
