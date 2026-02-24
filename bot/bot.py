@@ -290,6 +290,7 @@ def log_quick_order(order_data: dict):
             f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
             f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
             f.write(f"Спосіб зв'язку: {order_data.get('contact_method', 'Н/Д')}\n")
+            f.write(f"Повідомлення: {order_data.get('message', '')}\n")
             f.write(f"Статус: {order_data.get('status', 'нове')}\n")
             f.write(f"{'='*60}\n\n")
     except Exception as e:
@@ -415,6 +416,53 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
         
     except Exception as e:
         logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
+
+# ==================== НОВА ФУНКЦІЯ ДЛЯ ОБ'ЄДНАНИХ СПОВІЩЕНЬ ====================
+
+async def send_combined_quick_order_notification(context: ContextTypes.DEFAULT_TYPE, order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
+    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            return
+        
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM admins")
+        admins = cursor.fetchall()
+        conn.close()
+        
+        if not admins:
+            logger.warning("⚠️ Немає адмінів для сповіщення")
+            return
+        
+        # Формуємо ОДНЕ об'єднане повідомлення
+        message = f"🆕 <b>НОВЕ ⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
+        message += f"👤 <b>Клієнт:</b> {user_name}\n"
+        message += f"📱 <b>Username:</b> @{username}\n"
+        message += f"🆔 <b>User ID:</b> {user_id}\n"
+        message += f"📦 <b>Продукт:</b> {product_name}\n"
+        message += f"💬 <b>Спосіб зв'язку:</b> chat\n"
+        message += f"📝 <b>Повідомлення:</b> {message_text}\n"
+        message += f"🕒 <b>Час:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        sent_count = 0
+        for admin in admins:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin['user_id'],
+                    text=message,
+                    parse_mode='HTML'
+                )
+                sent_count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+        
+        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
 
 # ==================== КЛАС DATABASE ====================
 
@@ -1320,6 +1368,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
         
+        # ==================== ВИПРАВЛЕНИЙ ОБРОБНИК quick_chat_ ====================
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
             refresh_products()
@@ -1332,6 +1381,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
             username = user.username or 'немає'
             
+            # Створюємо швидке замовлення без повідомлення
             order_id = Database.save_quick_order(
                 user_id=user_id,
                 user_name=user_name,
@@ -1344,19 +1394,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message=None
             )
             
-            # Відправляємо сповіщення адмінам
-            order_data = {
-                "id": order_id,
-                "order_type": "quick",
-                "user_name": user_name,
-                "username": username,
-                "phone": None,
-                "product_name": product['name'],
-                "contact_method": "chat",
-                "user_id": user_id,
-                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            await notify_admins_about_new_order(context, order_data)
+            # НЕ відправляємо сповіщення зараз - будемо чекати повідомлення
+            # Зберігаємо ID замовлення в сесію, щоб потім прив'язати повідомлення
+            Database.save_user_session(user_id, "waiting_message_for_quick_order", {"order_id": order_id, "product_name": product['name']})
             
             response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
@@ -1370,27 +1410,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             
             logger.info(f"\n{'='*80}")
-            logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ):")
+            logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ - очікування повідомлення):")
             logger.info(f"👤 Клієнт: {user_name}")
             logger.info(f"📦 Продукт: {product['name']}")
-            logger.info(f"💰 Ціна: {product['price']} грн/{product['unit']}")
             logger.info(f"🆔 User ID: {user_id}")
-            logger.info(f"💬 Контакт: Чат Telegram")
             logger.info(f"{'='*80}\n")
             
-            log_quick_order({
-                "order_id": order_id,
-                "user_id": user_id,
-                "user_name": user_name,
-                "username": username,
-                "phone": None,
-                "product_name": product["name"],
-                "contact_method": "chat",
-                "status": "нове"
-            })
+            # НЕ очищаємо сесію - залишаємо для отримання повідомлення
             
-            Database.clear_user_session(user_id)
-        
         elif data == "faq":
             faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
             await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
@@ -1663,6 +1690,66 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             Database.clear_user_session(user_id)
             Database.save_user_session(user_id, last_section="main_menu")
         
+        # ==================== НОВИЙ ОБРОБНИК ДЛЯ ШВИДКОГО ЗАМОВЛЕННЯ ====================
+        elif state == "waiting_message_for_quick_order":
+            order_id = temp_data.get("order_id")
+            product_name = temp_data.get("product_name")
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
+            
+            # Оновлюємо швидке замовлення - додаємо повідомлення
+            conn = get_db_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE quick_orders 
+                        SET message = %s 
+                        WHERE id = %s
+                    ''', (text, order_id))
+                    conn.commit()
+                except Exception as e:
+                    logger.error(f"❌ Помилка оновлення повідомлення: {e}")
+                finally:
+                    conn.close()
+            
+            # Зберігаємо повідомлення в таблицю messages
+            Database.save_message(user_id, user_name, username, text, "швидке замовлення")
+            
+            # Відправляємо ОДНЕ об'єднане сповіщення адмінам
+            await send_combined_quick_order_notification(context, order_id, user_id, user_name, username, product_name, text)
+            
+            log_quick_order({
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "phone": None,
+                "product_name": product_name,
+                "contact_method": "chat",
+                "message": text,
+                "status": "нове"
+            })
+            
+            logger.info(f"\n{'='*80}")
+            logger.info(f"✅ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} - отримано повідомлення:")
+            logger.info(f"👤 Клієнт: {user_name}")
+            logger.info(f"📱 Username: {username}")
+            logger.info(f"📦 Продукт: {product_name}")
+            logger.info(f"💬 Повідомлення: {text}")
+            logger.info(f"{'='*80}\n")
+            
+            response = f"✅ <b>Дякуємо! Ваше повідомлення отримано!</b>\n\n"
+            response += f"🆔 <b>Номер замовлення:</b> #{order_id}\n"
+            response += f"📦 <b>Продукт:</b> {product_name}\n"
+            response += f"💬 <b>Ваше повідомлення:</b> {text}\n\n"
+            response += "<b>Ми зв'яжемося з вами найближчим часом для уточнення деталей!</b>\n\n"
+            response += "<i>Дякуємо за замовлення! 🌱</i>"
+            
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.clear_user_session(user_id)
+            Database.save_user_session(user_id, last_section="main_menu")
+        
         elif state.startswith("full_order_"):
             if state == "full_order_name":
                 temp_data["user_name"] = text
@@ -1790,6 +1877,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "phone": formatted_phone,
                 "product_name": product["name"],
                 "contact_method": "call",
+                "message": None,
                 "status": "нове"
             })
             
