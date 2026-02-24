@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import asyncio
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -29,14 +29,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ==================== ПОЛУЧЕНИЕ ТОКЕНА ====================
+# ==================== ПОЛУЧЕНИЕ ТОКЕНОВ ====================
 
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ BOT_TOKEN не знайдено! Додайте BOT_TOKEN в змінні середовища")
     sys.exit(1)
 
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
+if not ADMIN_BOT_TOKEN:
+    logger.error("❌ ADMIN_BOT_TOKEN не знайдено! Додайте ADMIN_BOT_TOKEN в змінні середовища")
+    sys.exit(1)
+
 logger.info(f"✅ Токен основного бота отримано: {TOKEN[:4]}...{TOKEN[-4:]}")
+logger.info(f"✅ Токен адмін-бота отримано: {ADMIN_BOT_TOKEN[:4]}...{ADMIN_BOT_TOKEN[-4:]}")
 
 # ==================== ПІДКЛЮЧЕННЯ ДО POSTGRESQL ====================
 
@@ -313,10 +319,10 @@ def check_single_instance():
         logger.error(f"⚠️ Ошибка проверки экземпляра: {e}")
         return True
 
-# ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
+# ==================== ФУНКЦІЇ ДЛЯ СПОВІЩЕНЬ АДМІНАМ (ВИПРАВЛЕНО) ====================
 
-async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, order_data: dict):
-    """Відправляє сповіщення всім адмінам про нове замовлення"""
+async def notify_admins_about_new_order(order_data: dict):
+    """Відправляє сповіщення всім адмінам про нове замовлення в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -357,10 +363,14 @@ async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, orde
         
         message += f"\n🕒 <b>Час:</b> {order_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+        
         sent_count = 0
         for admin in admins:
             try:
-                await context.bot.send_message(
+                # Відправляємо через адмін-бота
+                await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
                     parse_mode='HTML'
@@ -370,13 +380,13 @@ async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, orde
             except Exception as e:
                 logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам")
+        logger.info(f"✅ Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам через адмін-бота")
         
     except Exception as e:
         logger.error(f"❌ Помилка в notify_admins_about_new_order: {e}")
 
-async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, message_data: dict):
-    """Відправляє сповіщення всім адмінам про нове повідомлення від користувача"""
+async def notify_admins_about_message(message_data: dict):
+    """Відправляє сповіщення всім адмінам про нове повідомлення від користувача в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -399,10 +409,14 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
         message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
         message += f"🕒 <b>Час:</b> {message_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+        
         sent_count = 0
         for admin in admins:
             try:
-                await context.bot.send_message(
+                # Відправляємо через адмін-бота
+                await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
                     parse_mode='HTML'
@@ -412,15 +426,13 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
             except Exception as e:
                 logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про повідомлення відправлено {sent_count} адмінам")
+        logger.info(f"✅ Сповіщення про повідомлення відправлено {sent_count} адмінам через адмін-бота")
         
     except Exception as e:
         logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
 
-# ==================== НОВА ФУНКЦІЯ ДЛЯ ОБ'ЄДНАНИХ СПОВІЩЕНЬ ====================
-
-async def send_combined_quick_order_notification(context: ContextTypes.DEFAULT_TYPE, order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
-    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням"""
+async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
+    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням в АДМІН-БОТ"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -446,10 +458,14 @@ async def send_combined_quick_order_notification(context: ContextTypes.DEFAULT_T
         message += f"📝 <b>Повідомлення:</b> {message_text}\n"
         message += f"🕒 <b>Час:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+        
         sent_count = 0
         for admin in admins:
             try:
-                await context.bot.send_message(
+                # Відправляємо через адмін-бота
+                await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
                     parse_mode='HTML'
@@ -459,7 +475,7 @@ async def send_combined_quick_order_notification(context: ContextTypes.DEFAULT_T
             except Exception as e:
                 logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
+        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам через адмін-бота")
         
     except Exception as e:
         logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
@@ -1540,7 +1556,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         log_order(temp_data)
                         
                         # Відправляємо сповіщення адмінам
-                        await notify_admins_about_new_order(context, temp_data)
+                        await notify_admins_about_new_order(temp_data)
                         
                         Database.clear_user_session(user_id)
                         
@@ -1669,7 +1685,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "message_type": "повідомлення з меню",
                 "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
-            await notify_admins_about_message(context, message_data)
+            await notify_admins_about_message(message_data)
             
             log_message(message_data)
             
@@ -1716,8 +1732,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Зберігаємо повідомлення в таблицю messages
             Database.save_message(user_id, user_name, username, text, "швидке замовлення")
             
-            # Відправляємо ОДНЕ об'єднане сповіщення адмінам
-            await send_combined_quick_order_notification(context, order_id, user_id, user_name, username, product_name, text)
+            # Відправляємо ОДНЕ об'єднане сповіщення адмінам через адмін-бота
+            await send_combined_quick_order_notification(order_id, user_id, user_name, username, product_name, text)
             
             log_quick_order({
                 "order_id": order_id,
@@ -1855,7 +1871,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 0, formatted_phone, "call", None
             )
             
-            # Відправляємо сповіщення адмінам
+            # Відправляємо сповіщення адмінам через адмін-бота
             order_data = {
                 "id": order_id,
                 "order_type": "quick",
@@ -1867,7 +1883,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "user_id": user_id,
                 "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
-            await notify_admins_about_new_order(context, order_data)
+            await notify_admins_about_new_order(order_data)
             
             log_quick_order({
                 "order_id": order_id,
@@ -1909,7 +1925,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
             
-            # Відправляємо сповіщення адмінам
+            # Відправляємо сповіщення адмінам через адмін-бота
             message_data = {
                 "user_id": user_id,
                 "user_name": user_name,
@@ -1918,7 +1934,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "message_type": "повідомлення в чаті",
                 "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
-            await notify_admins_about_message(context, message_data)
+            await notify_admins_about_message(message_data)
             
             log_message(message_data)
             
