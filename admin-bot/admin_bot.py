@@ -22,16 +22,12 @@ from telegram.ext import (
     ContextTypes
 )
 
-# ==================== НАЛАШТУВАННЯ ЛОГУВАННЯ ====================
-
 logging.basicConfig(
     format='%(asctime)s - ADMIN - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
-
-# ==================== КИЇВСЬКИЙ ЧАСОВИЙ ПОЯС ====================
 
 KYIV_TZ = None
 try:
@@ -42,13 +38,11 @@ except ImportError:
     KYIV_TZ = None
 
 def get_kyiv_time():
-    """Повертає поточний час у Києві"""
     if KYIV_TZ:
         return datetime.now(KYIV_TZ)
     return datetime.now()
 
 def format_kyiv_time(dt_str):
-    """Форматує час з бази даних у київський час"""
     if not dt_str:
         return "Н/Д"
     try:
@@ -66,8 +60,6 @@ def format_kyiv_time(dt_str):
     except:
         return str(dt_str)[:16]
 
-# ==================== ЗМІННІ СЕРЕДОВИЩА ====================
-
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ ADMIN_BOT_TOKEN не знайдено!")
@@ -75,21 +67,18 @@ if not TOKEN:
 
 MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not MAIN_BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN не знайдено! Додайте BOT_TOKEN в змінні середовища")
+    logger.error("❌ BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 
-# ==================== ПІДКЛЮЧЕННЯ ДО POSTGRESQL ====================
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL не знайдено! Додайте змінну середовища")
+    logger.error("❌ DATABASE_URL не знайдено!")
     sys.exit(1)
 
 def get_db_connection():
-    """Підключення до PostgreSQL"""
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
@@ -98,7 +87,6 @@ def get_db_connection():
         return None
 
 def init_database_if_empty():
-    """Ініціалізує базу даних, якщо вона порожня"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -206,18 +194,6 @@ def init_database_if_empty():
         ''')
         
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reviews (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                user_name TEXT,
-                order_id INTEGER,
-                text TEXT,
-                rating INTEGER DEFAULT 5,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
             CREATE TABLE IF NOT EXISTS admins (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
@@ -226,7 +202,6 @@ def init_database_if_empty():
             )
         ''')
         
-        # Додаємо колонку message до quick_orders якщо її немає
         try:
             cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
         except:
@@ -267,27 +242,20 @@ def init_database_if_empty():
     finally:
         conn.close()
 
-# Локальна папка для звітів
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# ==================== СЕСІЇ АДМІНІВ ====================
-
 admin_sessions = {}
 last_password_check = {}
-orders_offset = {}  # Для пагінації замовлень
-messages_offset = {}  # Для пагінації повідомлень
-broadcast_in_progress = {}  # Для відстеження прогресу розсилки
+orders_offset = {}
+messages_offset = {}
+broadcast_in_progress = {}
 
 def is_authenticated(user_id: int) -> bool:
-    """Перевіряє чи авторизований адмін"""
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
 
-# ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
-
 async def notify_admins_about_new_order(order_data: dict):
-    """Відправляє сповіщення всім адмінам про нове замовлення"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -328,13 +296,11 @@ async def notify_admins_about_new_order(order_data: dict):
         
         message += f"\n🕒 <b>Час:</b> {format_kyiv_time(order_data.get('created_at'))}"
         
-        # Клавіатура з кнопками для керування замовленням
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}")],
             [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_{order_data.get('order_type', 'regular')}")]
         ])
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=TOKEN)
         
         sent_count = 0
@@ -358,7 +324,6 @@ async def notify_admins_about_new_order(order_data: dict):
         logger.error(traceback.format_exc())
 
 async def notify_admins_about_message(message_data: dict):
-    """Відправляє сповіщення всім адмінам про нове повідомлення від користувача"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -381,13 +346,11 @@ async def notify_admins_about_message(message_data: dict):
         message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
         message += f"🕒 <b>Час:</b> {format_kyiv_time(message_data.get('created_at'))}"
         
-        # Клавіатура з кнопками для відповіді
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_user_{message_data.get('user_id')}")],
             [InlineKeyboardButton("👤 Профіль клієнта", callback_data=f"customer_view_{message_data.get('user_id')}")]
         ])
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=TOKEN)
         
         sent_count = 0
@@ -411,7 +374,6 @@ async def notify_admins_about_message(message_data: dict):
         logger.error(traceback.format_exc())
 
 async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
-    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням"""
     try:
         conn = get_db_connection()
         if not conn:
@@ -427,7 +389,6 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
             logger.warning("⚠️ Немає адмінів для сповіщення")
             return
         
-        # Формуємо ОДНЕ об'єднане повідомлення
         message = f"🆕 <b>НОВЕ ⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
         message += f"👤 <b>Клієнт:</b> {user_name}\n"
         message += f"📱 <b>Username:</b> @{username}\n"
@@ -437,13 +398,11 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         message += f"📝 <b>Повідомлення:</b> {message_text}\n"
         message += f"🕒 <b>Час:</b> {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}"
         
-        # Клавіатура з кнопками для керування замовленням
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_quick")],
             [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_quick")]
         ])
         
-        # Створюємо окремого бота для адмін-бота
         admin_bot = Bot(token=TOKEN)
         
         sent_count = 0
@@ -466,17 +425,18 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
         logger.error(traceback.format_exc())
 
-# ==================== ФУНКЦІЇ ДЛЯ ЗАМОВЛЕНЬ ====================
-
 def safe_get(order, key, default=0):
-    """Безпечне отримання значення зі словника з перевіркою на None"""
     value = order.get(key)
     if value is None:
         return default
-    return value
+    if isinstance(value, (int, float)):
+        return value
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 0):
-    """Отримати всі замовлення з БД з пагінацією"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -484,7 +444,6 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
     try:
         cursor = conn.cursor()
         
-        # Отримуємо звичайні замовлення
         query = '''
             SELECT *, 'regular' as order_type FROM orders 
             ORDER BY created_at DESC
@@ -517,7 +476,6 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
             all_orders.append(order)
         
         if include_quick:
-            # Отримуємо швидкі замовлення
             query = '''
                 SELECT *, 'quick' as order_type FROM quick_orders 
                 ORDER BY created_at DESC
@@ -534,11 +492,10 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
                 order['order_id'] = order['id']
                 order['display_id'] = order['id']
                 order['total'] = safe_get(order, 'total', 0)
-                order['city'] = safe_get(order, 'city', 'Н/Д')
-                order['np_department'] = safe_get(order, 'np_department', 'Н/Д')
+                order['city'] = order.get('city', 'Н/Д')
+                order['np_department'] = order.get('np_department', 'Н/Д')
                 all_orders.append(order)
         
-        # Сортуємо всі замовлення за датою
         all_orders.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         
         return all_orders
@@ -550,7 +507,6 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
         conn.close()
 
 def get_recent_orders(hours: int = 1, min_count: int = 3):
-    """Отримує замовлення за останні години, якщо менше min_count - додає ще"""
     all_orders = get_all_orders(include_quick=True)
     
     kyiv_now = get_kyiv_time()
@@ -574,7 +530,6 @@ def get_recent_orders(hours: int = 1, min_count: int = 3):
             continue
     
     if len(recent_orders) < min_count:
-        # Додаємо ще останні замовлення
         additional = all_orders[:min_count]
         for order in additional:
             if order not in recent_orders:
@@ -583,7 +538,6 @@ def get_recent_orders(hours: int = 1, min_count: int = 3):
     return recent_orders[:min_count]
 
 def get_more_orders(user_id: int, count: int = 5):
-    """Отримує наступні замовлення для пагінації"""
     if user_id not in orders_offset:
         orders_offset[user_id] = 0
     
@@ -594,11 +548,9 @@ def get_more_orders(user_id: int, count: int = 5):
     return orders
 
 def format_order_text(order: dict) -> str:
-    """Форматує текст замовлення для відображення з безпечним форматуванням"""
     order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
     order_id = order.get('order_id', order.get('id', 'Н/Д'))
     
-    # Безпечно отримуємо значення
     user_name = order.get('user_name', 'Н/Д')
     phone = order.get('phone', 'Н/Д')
     total = safe_get(order, 'total', 0)
@@ -623,7 +575,6 @@ def format_order_text(order: dict) -> str:
     return text
 
 def get_orders_by_phone(phone: str):
-    """Отримати замовлення за номером телефону (звичайні та швидкі)"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -669,7 +620,6 @@ def get_orders_by_phone(phone: str):
         conn.close()
 
 def get_new_orders():
-    """Отримати нові замовлення (статус 'нове')"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -699,7 +649,6 @@ def get_new_orders():
         conn.close()
 
 def get_quick_orders():
-    """Отримати швидкі замовлення"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -730,7 +679,6 @@ def get_quick_orders():
         conn.close()
 
 def update_order_status(order_id: int, status: str, order_type: str = 'regular'):
-    """Оновити статус замовлення"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -757,7 +705,6 @@ def update_order_status(order_id: int, status: str, order_type: str = 'regular')
         conn.close()
 
 def get_order_by_id(order_id: int, order_type: str = 'regular'):
-    """Отримати замовлення за ID"""
     conn = get_db_connection()
     if not conn:
         return None
@@ -806,10 +753,7 @@ def get_order_by_id(order_id: int, order_type: str = 'regular'):
     finally:
         conn.close()
 
-# ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕННЯ КЛІЄНТА ПРО СТАТУС ====================
-
 async def notify_customer_about_status(user_id: int, order_id: int, status: str):
-    """Відправляє повідомлення клієнту про зміну статусу замовлення через основного бота"""
     try:
         status_messages = {
             "підтверджено": "✅ Ваше замовлення підтверджено! Ми розпочали його обробку.",
@@ -821,7 +765,6 @@ async def notify_customer_about_status(user_id: int, order_id: int, status: str)
         
         message = status_messages.get(status, f"📊 Статус вашого замовлення змінено на: {status}")
         
-        # Створюємо окремого бота для основного бота
         main_bot = Bot(token=MAIN_BOT_TOKEN)
         
         await main_bot.send_message(
@@ -835,10 +778,7 @@ async def notify_customer_about_status(user_id: int, order_id: int, status: str)
         logger.error(f"❌ Помилка відправки сповіщення клієнту {user_id}: {e}")
         return False
 
-# ==================== ФУНКЦІЇ ДЛЯ ПОВІДОМЛЕНЬ ====================
-
 def get_all_messages(limit: int = 50, offset: int = 0):
-    """Отримати всі повідомлення від користувачів з пагінацією"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -867,7 +807,6 @@ def get_all_messages(limit: int = 50, offset: int = 0):
         conn.close()
 
 def get_message_by_id(message_id: int):
-    """Отримати повідомлення за ID"""
     conn = get_db_connection()
     if not conn:
         return None
@@ -889,7 +828,6 @@ def get_message_by_id(message_id: int):
         conn.close()
 
 def get_recent_messages(hours: int = 24, min_count: int = 5):
-    """Отримує повідомлення за останні години, якщо менше min_count - додає ще"""
     all_messages = get_all_messages(limit=100)
     
     kyiv_now = get_kyiv_time()
@@ -913,7 +851,6 @@ def get_recent_messages(hours: int = 24, min_count: int = 5):
             continue
     
     if len(recent_messages) < min_count:
-        # Додаємо ще останні повідомлення
         additional = all_messages[:min_count]
         for msg in additional:
             if msg not in recent_messages:
@@ -922,7 +859,6 @@ def get_recent_messages(hours: int = 24, min_count: int = 5):
     return recent_messages[:min_count]
 
 def get_more_messages(user_id: int, count: int = 5):
-    """Отримує наступні повідомлення для пагінації"""
     if user_id not in messages_offset:
         messages_offset[user_id] = 0
     
@@ -933,7 +869,6 @@ def get_more_messages(user_id: int, count: int = 5):
     return messages
 
 def format_message_text(msg: dict) -> str:
-    """Форматує текст повідомлення для відображення"""
     text = f"💬 <b>Повідомлення #{msg['id']}</b>\n\n"
     text += f"👤 <b>Клієнт:</b> {msg['user_name']}\n"
     text += f"📱 <b>Username:</b> @{msg['username']}\n"
@@ -944,7 +879,6 @@ def format_message_text(msg: dict) -> str:
     return text
 
 def get_messages_by_user(user_id: int):
-    """Отримати повідомлення конкретного користувача"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -973,7 +907,6 @@ def get_messages_by_user(user_id: int):
         conn.close()
 
 def format_messages_text(messages: list) -> str:
-    """Форматує повідомлення для відправки"""
     if not messages:
         return "💬 Повідомлень поки немає"
     
@@ -992,7 +925,6 @@ def format_messages_text(messages: list) -> str:
     return text
 
 def generate_messages_file(messages: list) -> bytes:
-    """Генерує файл з повідомленнями"""
     output = StringIO()
     output.write("ПОВІДОМЛЕННЯ ВІД КОРИСТУВАЧІВ\n")
     output.write("=" * 80 + "\n")
@@ -1010,10 +942,7 @@ def generate_messages_file(messages: list) -> bytes:
     
     return output.getvalue().encode('utf-8')
 
-# ==================== ФУНКЦІЇ ДЛЯ КЛІЄНТІВ ====================
-
 def get_all_users():
-    """Отримати всіх користувачів"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1041,7 +970,6 @@ def get_all_users():
         conn.close()
 
 def get_user_by_phone(phone: str):
-    """Отримати користувача за номером телефону"""
     conn = get_db_connection()
     if not conn:
         return None
@@ -1073,7 +1001,6 @@ def get_user_by_phone(phone: str):
         conn.close()
 
 def get_user_by_id(user_id: int):
-    """Отримати користувача за ID"""
     conn = get_db_connection()
     if not conn:
         return None
@@ -1095,7 +1022,6 @@ def get_user_by_id(user_id: int):
         conn.close()
 
 def get_user_orders(user_id: int):
-    """Отримати всі замовлення користувача"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1139,7 +1065,6 @@ def get_user_orders(user_id: int):
         conn.close()
 
 def get_user_messages(user_id: int):
-    """Отримати повідомлення користувача"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1168,7 +1093,6 @@ def get_user_messages(user_id: int):
         conn.close()
 
 def get_user_quick_orders(user_id: int):
-    """Отримати швидкі замовлення користувача"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1199,7 +1123,6 @@ def get_user_quick_orders(user_id: int):
         conn.close()
 
 def get_customer_segment(user_data: dict, orders: list) -> str:
-    """Визначення сегменту клієнта"""
     if not orders:
         return "🆕 Новий клієнт (без замовлень)"
     
@@ -1236,394 +1159,7 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
     else:
         return "📊 Активний клієнт"
 
-# ==================== ФУНКЦІЇ ДЛЯ РОЗСИЛОК ====================
-
-async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int = None):
-    """Відправка розсилки ВСІМ користувачам через основного бота"""
-    users = get_all_users()
-    sent_count = 0
-    fail_count = 0
-    
-    if not users:
-        logger.warning("⚠️ Немає користувачів для розсилки")
-        if admin_user_id:
-            try:
-                await admin_bot.send_message(
-                    chat_id=admin_user_id,
-                    text="⚠️ Немає користувачів для розсилки",
-                    parse_mode='HTML'
-                )
-            except:
-                pass
-        return 0, 0
-    
-    # Відправляємо повідомлення про початок розсилки адміну
-    if admin_user_id:
-        try:
-            await admin_bot.send_message(
-                chat_id=admin_user_id,
-                text=f"📢 <b>Розпочато розсилку ВСІМ користувачам</b>\n\n👥 Всього: {len(users)}",
-                parse_mode='HTML'
-            )
-        except:
-            pass
-    
-    # Створюємо окремого бота для основного бота
-    main_bot = Bot(token=MAIN_BOT_TOKEN)
-    
-    # Створюємо словник для збереження прогресу
-    broadcast_in_progress[admin_user_id] = {"total": len(users), "sent": 0, "failed": 0}
-    
-    for i, user in enumerate(users):
-        try:
-            # Відправляємо через основного бота - ТІЛЬКИ ТЕКСТ, без додаткового тексту
-            await main_bot.send_message(
-                chat_id=user['user_id'],
-                text=message,  # Тільки текст, який ввів адмін
-                parse_mode='HTML'
-            )
-            sent_count += 1
-            
-            # Оновлюємо прогрес
-            if admin_user_id and admin_user_id in broadcast_in_progress:
-                broadcast_in_progress[admin_user_id]["sent"] = sent_count
-            
-            # Відправляємо статус кожні 10 повідомлень
-            if admin_user_id and (i + 1) % 10 == 0:
-                try:
-                    await admin_bot.send_message(
-                        chat_id=admin_user_id,
-                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(users)} (✓ {sent_count} | ✗ {fail_count})",
-                        parse_mode='HTML'
-                    )
-                except:
-                    pass
-            
-            await asyncio.sleep(0.1)  # Невелика затримка, щоб не флудити
-        except Exception as e:
-            error_str = str(e)
-            if "Chat not found" in error_str or "bot was blocked" in error_str:
-                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
-            else:
-                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
-            fail_count += 1
-            if admin_user_id and admin_user_id in broadcast_in_progress:
-                broadcast_in_progress[admin_user_id]["failed"] = fail_count
-    
-    # Видаляємо інформацію про прогрес після завершення
-    if admin_user_id and admin_user_id in broadcast_in_progress:
-        del broadcast_in_progress[admin_user_id]
-    
-    return sent_count, fail_count
-
-async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, admin_user_id: int = None):
-    """Відправка розсилки по сегменту клієнтів через основного бота"""
-    users = get_all_users()
-    sent_count = 0
-    fail_count = 0
-    
-    if not users:
-        logger.warning("⚠️ Немає користувачів для розсилки")
-        return 0, 0
-    
-    # Фільтруємо користувачів за сегментом
-    filtered_users = []
-    segment_map = {
-        "vip": "👑 VIP клієнт",
-        "regular": "⭐ Постійний клієнт",
-        "new": "🆕 Новий клієнт",
-        "inactive": "💤 Неактивний клієнт",
-        "active": "📊 Активний клієнт"
-    }
-    
-    for user in users:
-        user_orders = get_user_orders(user['user_id'])
-        quick_orders = get_user_quick_orders(user['user_id'])
-        all_orders = user_orders + quick_orders
-        user_segment = get_customer_segment(user, all_orders)
-        
-        if segment in user_segment or (segment == "new" and "Новий" in user_segment):
-            filtered_users.append(user)
-    
-    if admin_user_id:
-        try:
-            segment_name = segment_map.get(segment, segment)
-            await admin_bot.send_message(
-                chat_id=admin_user_id,
-                text=f"📢 <b>Розпочато розсилку для {segment_name}</b>\n\n👥 Всього: {len(filtered_users)}",
-                parse_mode='HTML'
-            )
-        except:
-            pass
-    
-    # Створюємо окремого бота для основного бота
-    main_bot = Bot(token=MAIN_BOT_TOKEN)
-    
-    # Створюємо словник для збереження прогресу
-    broadcast_in_progress[admin_user_id] = {"total": len(filtered_users), "sent": 0, "failed": 0}
-    
-    for i, user in enumerate(filtered_users):
-        try:
-            # Відправляємо через основного бота - ТІЛЬКИ ТЕКСТ, без додаткового тексту
-            await main_bot.send_message(
-                chat_id=user['user_id'],
-                text=message,  # Тільки текст, який ввів адмін
-                parse_mode='HTML'
-            )
-            sent_count += 1
-            
-            # Оновлюємо прогрес
-            if admin_user_id and admin_user_id in broadcast_in_progress:
-                broadcast_in_progress[admin_user_id]["sent"] = sent_count
-            
-            # Відправляємо статус кожні 10 повідомлень
-            if admin_user_id and (i + 1) % 10 == 0:
-                try:
-                    await admin_bot.send_message(
-                        chat_id=admin_user_id,
-                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(filtered_users)} (✓ {sent_count} | ✗ {fail_count})",
-                        parse_mode='HTML'
-                    )
-                except:
-                    pass
-            
-            await asyncio.sleep(0.1)
-        except Exception as e:
-            error_str = str(e)
-            if "Chat not found" in error_str or "bot was blocked" in error_str:
-                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
-            else:
-                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
-            fail_count += 1
-            if admin_user_id and admin_user_id in broadcast_in_progress:
-                broadcast_in_progress[admin_user_id]["failed"] = fail_count
-    
-    # Видаляємо інформацію про прогрес після завершення
-    if admin_user_id and admin_user_id in broadcast_in_progress:
-        del broadcast_in_progress[admin_user_id]
-    
-    return sent_count, fail_count
-
-# ==================== ФУНКЦІЇ ДЛЯ ВІДГУКІВ ====================
-
-async def send_review_request(user_id: int, order_id: int = None):
-    """Відправка запиту на відгук через основного бота"""
-    text = "⭐ <b>Ваша думка важлива для нас!</b>\n\n"
-    text += "Будемо вдячні, якщо ви залишите відгук про наші продукти:\n\n"
-    text += "• Якість товару\n"
-    text += "• Швидкість доставки\n"
-    text += "• Обслуговування\n\n"
-    text += "Напишіть ваш відгук прямо в цьому чаті, і ми опублікуємо його на наших сторінках!\n\n"
-    text += "<i>Дякуємо, що обираєте Бонелет! 🌱</i>"
-    
-    if order_id:
-        text = f"📦 <b>Замовлення #{order_id}</b>\n\n" + text
-    
-    try:
-        # Створюємо окремого бота для основного бота
-        main_bot = Bot(token=MAIN_BOT_TOKEN)
-        
-        await main_bot.send_message(
-            chat_id=user_id,
-            text=text,
-            parse_mode='HTML'
-        )
-        return True
-    except Exception as e:
-        logger.error(f"Помилка відправки запиту на відгук: {e}")
-        return False
-
-def get_all_reviews(limit: int = None):
-    """Отримати всі відгуки"""
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        if limit:
-            cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC LIMIT %s', (limit,))
-        else:
-            cursor.execute('SELECT * FROM reviews ORDER BY created_at DESC')
-        rows = cursor.fetchall()
-        
-        reviews = []
-        for row in rows:
-            review = dict(row)
-            review['created_at'] = format_kyiv_time(review.get('created_at'))
-            reviews.append(review)
-        
-        return reviews
-    except Exception as e:
-        logger.error(f"❌ Помилка отримання відгуків: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def format_reviews_text(reviews: list) -> str:
-    """Форматує відгуки для відправки"""
-    if not reviews:
-        return "⭐ Відгуків поки немає"
-    
-    text = "⭐ <b>ВІДГУКИ КЛІЄНТІВ</b>\n\n"
-    for i, review in enumerate(reviews, 1):
-        rating_stars = "⭐" * review['rating']
-        text += f"<b>{i}. {review['user_name']}</b> {rating_stars}\n"
-        text += f"📅 {review['created_at'][:16]}\n"
-        text += f"💬 {review['text'][:100]}{'...' if len(review['text']) > 100 else ''}\n"
-        if review.get('order_id'):
-            text += f"📦 Замовлення №{review['order_id']}\n"
-        text += f"{'─'*40}\n"
-    
-    return text
-
-def generate_reviews_file(reviews: list) -> bytes:
-    """Генерує файл з відгуками"""
-    output = StringIO()
-    output.write("ВІДГУКИ КЛІЄНТІВ\n")
-    output.write("=" * 80 + "\n")
-    output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    output.write(f"Всього відгуків: {len(reviews)}\n")
-    output.write("=" * 80 + "\n\n")
-    
-    for i, review in enumerate(reviews, 1):
-        rating_stars = "⭐" * review['rating']
-        output.write(f"{i}. {review['user_name']} {rating_stars}\n")
-        output.write(f"Дата: {review['created_at'][:16]}\n")
-        output.write(f"Текст: {review['text']}\n")
-        if review.get('order_id'):
-            output.write(f"Замовлення: №{review['order_id']}\n")
-        output.write("-" * 40 + "\n")
-    
-    return output.getvalue().encode('utf-8')
-
-# ==================== ФУНКЦІЇ ДЛЯ СТАТИСТИКИ ====================
-
-def get_statistics():
-    """Отримати статистику"""
-    conn = get_db_connection()
-    if not conn:
-        return {}
-    
-    try:
-        cursor = conn.cursor()
-        
-        # Загальна кількість замовлень (звичайні)
-        cursor.execute("SELECT COUNT(*) FROM orders")
-        regular_orders = cursor.fetchone()['count'] or 0
-        
-        # Загальна кількість швидких замовлень
-        cursor.execute("SELECT COUNT(*) FROM quick_orders")
-        quick_orders_count = cursor.fetchone()['count'] or 0
-        
-        # Загальна кількість користувачів
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()['count'] or 0
-        
-        # Загальна кількість повідомлень
-        cursor.execute("SELECT COUNT(*) FROM messages")
-        total_messages = cursor.fetchone()['count'] or 0
-        
-        # Загальна кількість відгуків
-        cursor.execute("SELECT COUNT(*) FROM reviews")
-        total_reviews = cursor.fetchone()['count'] or 0
-        
-        # Сума замовлень (звичайні)
-        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM orders")
-        regular_revenue = cursor.fetchone()['coalesce'] or 0
-        
-        # Сума швидких замовлень
-        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM quick_orders")
-        quick_revenue = cursor.fetchone()['coalesce'] or 0
-        
-        total_orders = regular_orders + quick_orders_count
-        total_revenue = regular_revenue + quick_revenue
-        
-        avg_check = total_revenue / total_orders if total_orders > 0 else 0
-        
-        # Статуси звичайних замовлень
-        cursor.execute("SELECT status, COUNT(*) FROM orders GROUP BY status")
-        rows = cursor.fetchall()
-        orders_by_status = {row['status']: row['count'] for row in rows}
-        
-        # Статуси швидких замовлень
-        cursor.execute("SELECT status, COUNT(*) FROM quick_orders GROUP BY status")
-        quick_rows = cursor.fetchall()
-        for row in quick_rows:
-            status = row['status']
-            if status in orders_by_status:
-                orders_by_status[status] += row['count']
-            else:
-                orders_by_status[status] = row['count']
-        
-        # Замовлення за останні 30 днів (звичайні)
-        cursor.execute('''
-            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM orders 
-            WHERE created_at >= NOW() - INTERVAL '30 days'
-        ''')
-        last_30_days_regular = cursor.fetchone()
-        
-        # Замовлення за останні 30 днів (швидкі)
-        cursor.execute('''
-            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM quick_orders 
-            WHERE created_at >= NOW() - INTERVAL '30 days'
-        ''')
-        last_30_days_quick = cursor.fetchone()
-        
-        last_30_days_count = (last_30_days_regular['coalesce'] or 0) + (last_30_days_quick['coalesce'] or 0)
-        last_30_days_sum = (last_30_days_regular['coalesce_2'] or 0) + (last_30_days_quick['coalesce_2'] or 0)
-        
-        # Сегментація клієнтів
-        users = get_all_users()
-        segments = {
-            "vip": 0,
-            "regular": 0,
-            "new": 0,
-            "inactive": 0,
-            "active": 0
-        }
-        
-        for user in users:
-            orders = get_user_orders(user['user_id'])
-            quick_orders = get_user_quick_orders(user['user_id'])
-            all_orders = orders + quick_orders
-            segment = get_customer_segment(user, all_orders)
-            if "VIP" in segment:
-                segments["vip"] += 1
-            elif "Постійний" in segment:
-                segments["regular"] += 1
-            elif "Неактивний" in segment:
-                segments["inactive"] += 1
-            elif "Новий" in segment:
-                segments["new"] += 1
-            else:
-                segments["active"] += 1
-        
-        return {
-            "total_orders": total_orders,
-            "total_users": total_users,
-            "total_quick_orders": quick_orders_count,
-            "total_messages": total_messages,
-            "total_reviews": total_reviews,
-            "total_revenue": total_revenue,
-            "avg_check": avg_check,
-            "orders_by_status": orders_by_status,
-            "last_30_days_orders": last_30_days_count,
-            "last_30_days_revenue": last_30_days_sum,
-            "segments": segments
-        }
-    except Exception as e:
-        logger.error(f"Помилка отримання статистики: {e}")
-        logger.error(traceback.format_exc())
-        return {}
-    finally:
-        conn.close()
-
-# ==================== ФУНКЦІЇ ДЛЯ ТОВАРІВ ====================
-
 def get_all_products():
-    """Отримати всі товари з БД"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1648,7 +1184,6 @@ def get_all_products():
         conn.close()
 
 def get_product_by_id(product_id: int):
-    """Отримати товар за ID"""
     products = get_all_products()
     for product in products:
         if product["id"] == product_id:
@@ -1656,7 +1191,6 @@ def get_product_by_id(product_id: int):
     return None
 
 def update_product(product_id: int, **kwargs):
-    """Оновлює товар"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -1682,7 +1216,6 @@ def update_product(product_id: int, **kwargs):
         conn.close()
 
 def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
-    """Додає новий товар"""
     logger.info(f"🔄 Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
@@ -1712,7 +1245,6 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
         conn.close()
         
 def delete_product(product_id: int):
-    """Видаляє товар"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -1729,10 +1261,7 @@ def delete_product(product_id: int):
     finally:
         conn.close()
 
-# ==================== ФУНКЦІЇ ДЛЯ АДМІНІВ ====================
-
 def get_all_admins():
-    """Отримує список адмінів"""
     conn = get_db_connection()
     if not conn:
         return []
@@ -1756,7 +1285,6 @@ def get_all_admins():
         conn.close()
 
 def add_admin(user_id: int, username: str = "", added_by: int = 0):
-    """Додає нового адміна"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -1780,7 +1308,6 @@ def add_admin(user_id: int, username: str = "", added_by: int = 0):
         conn.close()
 
 def remove_admin(user_id: int):
-    """Видаляє адміна"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -1798,7 +1325,6 @@ def remove_admin(user_id: int):
         conn.close()
 
 def is_admin(user_id: int) -> bool:
-    """Перевіряє чи є користувач адміном"""
     conn = get_db_connection()
     if not conn:
         return False
@@ -1815,10 +1341,7 @@ def is_admin(user_id: int) -> bool:
     finally:
         conn.close()
 
-# ==================== ФУНКЦІЇ ГЕНЕРАЦІЇ ЗВІТІВ ====================
-
 def generate_orders_report(orders: list, format: str = "txt"):
-    """Згенерувати звіт по замовленнях"""
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ЗАМОВЛЕННЯХ\n")
@@ -1864,55 +1387,69 @@ def generate_orders_report(orders: list, format: str = "txt"):
         
         return output.getvalue().encode('utf-8-sig')
 
-def generate_users_report(users: list, format: str = "txt"):
-    """Згенерувати звіт по користувачах"""
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО КОРИСТУВАЧАХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього користувачів: {len(users)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for user in users:
-            orders = get_user_orders(user['user_id'])
-            quick_orders = get_user_quick_orders(user['user_id'])
-            all_orders = orders + quick_orders
-            segment = get_customer_segment(user, all_orders)
-            output.write(f"ID: {user['user_id']}\n")
-            output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
-            output.write(f"Username: @{user['username']}\n")
-            output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
-            output.write(f"Сегмент: {segment}\n")
-            output.write(f"Замовлень: {len(all_orders)}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
+def generate_users_report(users: list) -> bytes:
+    output = StringIO()
+    output.write("ЗВІТ ПО КОРИСТУВАЧАХ\n")
+    output.write("=" * 100 + "\n")
+    output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    output.write(f"Всього користувачів: {len(users)}\n")
+    output.write("=" * 100 + "\n\n")
     
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['ID', 'Імя', 'Прізвище', 'Username', 'Дата реєстрації', 'Сегмент', 'Замовлень'])
+    for user in users:
+        user_id = user['user_id']
+        orders = get_user_orders(user_id)
+        quick_orders = get_user_quick_orders(user_id)
+        messages = get_user_messages(user_id)
+        all_orders = orders + quick_orders
         
-        for user in users:
-            orders = get_user_orders(user['user_id'])
-            quick_orders = get_user_quick_orders(user['user_id'])
-            all_orders = orders + quick_orders
-            segment = get_customer_segment(user, all_orders)
-            writer.writerow([
-                user['user_id'],
-                user['first_name'],
-                user['last_name'],
-                user['username'],
-                user['created_at'][:16],
-                segment,
-                len(all_orders)
-            ])
+        segment = get_customer_segment(user, all_orders)
         
-        return output.getvalue().encode('utf-8-sig')
+        output.write(f"ID: {user_id}\n")
+        output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
+        output.write(f"Username: @{user['username']}\n")
+        output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
+        output.write(f"Сегмент: {segment}\n\n")
+        
+        output.write("📦 ЗАМОВЛЕННЯ:\n")
+        output.write(f"  Всього замовлень: {len(all_orders)}\n")
+        
+        if all_orders:
+            total_spent = sum(o.get('total', 0) for o in orders)
+            output.write(f"  Загальна сума: {total_spent:.2f} грн\n")
+            output.write(f"  Середній чек: {total_spent/len(orders) if orders else 0:.2f} грн\n\n")
+            
+            output.write("  Останні замовлення:\n")
+            for i, order in enumerate(all_orders[:3], 1):
+                order_id = order.get('order_id', order.get('id', 'Н/Д'))
+                order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
+                created_at = order.get('created_at', '')[:16]
+                status = order.get('status', 'нове')
+                total = order.get('total', 0)
+                output.write(f"    {i}. {order_type} №{order_id} | {created_at} | {total:.2f} грн | {status}\n")
+                if order.get('order_type') == 'quick' and order.get('message'):
+                    output.write(f"       Повідомлення: {order.get('message')[:100]}\n")
+                elif order.get('order_type') == 'regular' and order.get('items'):
+                    output.write(f"       Товари:\n")
+                    for item in order.get('items', [])[:2]:
+                        output.write(f"         • {item['product_name']} x{item['quantity']} = {item['price_per_unit'] * item['quantity']:.2f} грн\n")
+                    if len(order.get('items', [])) > 2:
+                        output.write(f"         ... та ще {len(order.get('items', [])) - 2} товарів\n")
+        else:
+            output.write("  Замовлень немає\n")
+        
+        output.write(f"\n💬 ПОВІДОМЛЕННЯ: {len(messages)}\n")
+        if messages:
+            output.write("  Останні повідомлення:\n")
+            for i, msg in enumerate(messages[:3], 1):
+                created_at = msg.get('created_at', '')[:16]
+                text = msg.get('text', '')
+                output.write(f"    {i}. {created_at}: {text[:100]}{'...' if len(text) > 100 else ''}\n")
+        
+        output.write("-" * 100 + "\n\n")
+    
+    return output.getvalue().encode('utf-8')
 
 def generate_quick_orders_report(orders: list, format: str = "txt"):
-    """Згенерувати звіт по швидких замовленнях"""
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ШВИДКИХ ЗАМОВЛЕННЯХ\n")
@@ -1957,7 +1494,6 @@ def generate_quick_orders_report(orders: list, format: str = "txt"):
         return output.getvalue().encode('utf-8-sig')
 
 def generate_stats_report(stats: dict, format: str = "txt"):
-    """Згенерувати звіт по статистиці"""
     if format == "txt":
         output = StringIO()
         output.write("СТАТИСТИКА\n")
@@ -1970,8 +1506,7 @@ def generate_stats_report(stats: dict, format: str = "txt"):
         output.write(f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n")
         output.write(f"👥 Клієнтів: {stats.get('total_users', 0)}\n")
         output.write(f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n")
-        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n")
-        output.write(f"⭐ Відгуків: {stats.get('total_reviews', 0)}\n\n")
+        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n")
         
         output.write("📊 Замовлення за останні 30 днів:\n")
         output.write(f"   Кількість: {stats.get('last_30_days_orders', 0)}\n")
@@ -1992,7 +1527,6 @@ def generate_stats_report(stats: dict, format: str = "txt"):
         return output.getvalue().encode('utf-8')
 
 def generate_messages_report(messages: list, format: str = "txt"):
-    """Згенерувати звіт по повідомленнях"""
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ПОВІДОМЛЕННЯХ\n")
@@ -2031,7 +1565,108 @@ def generate_messages_report(messages: list, format: str = "txt"):
         
         return output.getvalue().encode('utf-8-sig')
 
-# ==================== ФУНКЦІЇ КЛАВІАТУР ====================
+def get_statistics():
+    conn = get_db_connection()
+    if not conn:
+        return {}
+    
+    try:
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM orders")
+        regular_orders = cursor.fetchone()['count'] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM quick_orders")
+        quick_orders_count = cursor.fetchone()['count'] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()['count'] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM messages")
+        total_messages = cursor.fetchone()['count'] or 0
+        
+        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM orders")
+        regular_revenue = cursor.fetchone()['coalesce'] or 0
+        
+        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM quick_orders")
+        quick_revenue = cursor.fetchone()['coalesce'] or 0
+        
+        total_orders = regular_orders + quick_orders_count
+        total_revenue = regular_revenue + quick_revenue
+        
+        avg_check = total_revenue / total_orders if total_orders > 0 else 0
+        
+        cursor.execute("SELECT status, COUNT(*) FROM orders GROUP BY status")
+        rows = cursor.fetchall()
+        orders_by_status = {row['status']: row['count'] for row in rows}
+        
+        cursor.execute("SELECT status, COUNT(*) FROM quick_orders GROUP BY status")
+        quick_rows = cursor.fetchall()
+        for row in quick_rows:
+            status = row['status']
+            if status in orders_by_status:
+                orders_by_status[status] += row['count']
+            else:
+                orders_by_status[status] = row['count']
+        
+        cursor.execute('''
+            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM orders 
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+        ''')
+        last_30_days_regular = cursor.fetchone()
+        
+        cursor.execute('''
+            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM quick_orders 
+            WHERE created_at >= NOW() - INTERVAL '30 days'
+        ''')
+        last_30_days_quick = cursor.fetchone()
+        
+        last_30_days_count = (last_30_days_regular['coalesce'] or 0) + (last_30_days_quick['coalesce'] or 0)
+        last_30_days_sum = (last_30_days_regular['coalesce_2'] or 0) + (last_30_days_quick['coalesce_2'] or 0)
+        
+        users = get_all_users()
+        segments = {
+            "vip": 0,
+            "regular": 0,
+            "new": 0,
+            "inactive": 0,
+            "active": 0
+        }
+        
+        for user in users:
+            orders = get_user_orders(user['user_id'])
+            quick_orders = get_user_quick_orders(user['user_id'])
+            all_orders = orders + quick_orders
+            segment = get_customer_segment(user, all_orders)
+            if "VIP" in segment:
+                segments["vip"] += 1
+            elif "Постійний" in segment:
+                segments["regular"] += 1
+            elif "Неактивний" in segment:
+                segments["inactive"] += 1
+            elif "Новий" in segment:
+                segments["new"] += 1
+            else:
+                segments["active"] += 1
+        
+        return {
+            "total_orders": total_orders,
+            "total_users": total_users,
+            "total_quick_orders": quick_orders_count,
+            "total_messages": total_messages,
+            "total_revenue": total_revenue,
+            "avg_check": avg_check,
+            "orders_by_status": orders_by_status,
+            "last_30_days_orders": last_30_days_count,
+            "last_30_days_revenue": last_30_days_sum,
+            "segments": segments
+        }
+    except Exception as e:
+        logger.error(f"Помилка отримання статистики: {e}")
+        logger.error(traceback.format_exc())
+        return {}
+    finally:
+        conn.close()
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
     keyboard = []
@@ -2056,7 +1691,6 @@ def get_main_menu():
         [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
         [{"text": "📁 Звіти", "callback_data": "admin_reports"}],
         [{"text": "📢 Розсилки", "callback_data": "admin_broadcast"}],
-        [{"text": "⭐ Відгуки", "callback_data": "admin_reviews"}],
         [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
@@ -2096,6 +1730,7 @@ def get_customers_menu():
         [{"text": "⭐ Постійні клієнти", "callback_data": "admin_customers_regular"}],
         [{"text": "🆕 Нові клієнти", "callback_data": "admin_customers_new"}],
         [{"text": "💤 Неактивні клієнти", "callback_data": "admin_customers_inactive"}],
+        [{"text": "📁 Вивантажити клієнтів", "callback_data": "export_customers"}],
         [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
     return create_inline_keyboard(keyboard)
@@ -2104,6 +1739,7 @@ def get_messages_menu():
     keyboard = [
         [{"text": "📋 Останні повідомлення", "callback_data": "admin_messages_recent"}],
         [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
+        [{"text": "🔍 Детально", "callback_data": "admin_messages_details"}],
         [{"text": "📁 Всі повідомлення файлом", "callback_data": "messages_all_file"}],
         [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
@@ -2116,15 +1752,6 @@ def get_broadcast_menu():
         [{"text": "⭐ Постійним клієнтам", "callback_data": "broadcast_regular"}],
         [{"text": "🆕 Новим клієнтам", "callback_data": "broadcast_new"}],
         [{"text": "💤 Неактивним клієнтам", "callback_data": "broadcast_inactive"}],
-        [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_reviews_menu():
-    keyboard = [
-        [{"text": "📋 Останні відгуки", "callback_data": "recent_reviews"}],
-        [{"text": "🔢 Вказати кількість", "callback_data": "reviews_count"}],
-        [{"text": "📁 Всі відгуки файлом", "callback_data": "reviews_all_file"}],
         [{"text": "🔙 Назад", "callback_data": "admin_back_main"}]
     ]
     return create_inline_keyboard(keyboard)
@@ -2167,7 +1794,6 @@ def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
         [{"text": "🚚 Відправлено", "callback_data": f"order_shipped_{order_id}_{order_type}"}],
         [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
         [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
-        [{"text": "⭐ Запитати відгук", "callback_data": f"order_review_{order_id}_{order_type}"}],
         [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
         [{"text": "🔙 Назад", "callback_data": "admin_order_all"}]
     ]
@@ -2187,7 +1813,6 @@ def get_customer_actions_menu(user_id: int):
         [{"text": "📋 Історія замовлень", "callback_data": f"customer_orders_{user_id}"}],
         [{"text": "💬 Повідомлення", "callback_data": f"customer_messages_{user_id}"}],
         [{"text": "📢 Надіслати повідомлення", "callback_data": f"customer_message_{user_id}"}],
-        [{"text": "⭐ Запитати відгук", "callback_data": f"customer_review_{user_id}"}],
         [{"text": "👑 Зробити адміном", "callback_data": f"customer_make_admin_{user_id}"}],
         [{"text": "🔙 Назад", "callback_data": "admin_customers"}]
     ]
@@ -2200,14 +1825,12 @@ def get_order_status_keyboard(order_id: int, order_type: str = 'regular'):
         [{"text": "🚚 Відправлено", "callback_data": f"order_shipped_{order_id}_{order_type}"}],
         [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
         [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
-        [{"text": "⭐ Запитати відгук", "callback_data": f"order_review_{order_id}_{order_type}"}],
         [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
         [{"text": "🔙 Назад", "callback_data": "admin_order_all"}]
     ]
     return create_inline_keyboard(keyboard)
 
 def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
-    """Клавіатура для пагінації замовлень"""
     buttons = []
     if has_more:
         buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
@@ -2216,15 +1839,14 @@ def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
     return create_inline_keyboard(buttons)
 
 def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
-    """Клавіатура для пагінації повідомлень"""
     buttons = []
     if has_more:
         buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": "admin_messages_more"}])
+    buttons.append([{"text": "🔍 Детально", "callback_data": "admin_messages_details"}])
     buttons.append([{"text": "🔙 Назад до меню", "callback_data": "admin_messages"}])
     return create_inline_keyboard(buttons)
 
 def get_reply_keyboard(order_id: int = None, user_id: int = None):
-    """Клавіатура для відповіді"""
     buttons = []
     if order_id:
         buttons.append([{"text": "📦 Переглянути замовлення", "callback_data": f"order_view_{order_id}"}])
@@ -2233,20 +1855,12 @@ def get_reply_keyboard(order_id: int = None, user_id: int = None):
     buttons.append([{"text": "🔙 Назад", "callback_data": "admin_back_main"}])
     return create_inline_keyboard(buttons)
 
-def get_reviews_back_keyboard() -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад до відгуків", "callback_data": "admin_reviews"}]]
-    return create_inline_keyboard(buttons)
-
 def get_messages_back_keyboard() -> InlineKeyboardMarkup:
     buttons = [[{"text": "🔙 Назад до повідомлень", "callback_data": "admin_messages"}]]
     return create_inline_keyboard(buttons)
 
-# ==================== ПЕРЕВІРКА АВТОРИЗАЦІЇ ====================
-
 def is_authenticated(user_id: int) -> bool:
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
-
-# ==================== ОБРОБНИКИ КОМАНД ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -2279,8 +1893,6 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
         admin_sessions.pop(user_id, None)
 
-# ==================== ОБРОБНИКИ КНОПОК ====================
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -2296,12 +1908,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Сесія закінчилась\n\nНапишіть /start для повторного входу")
             return
         
-        # Скидаємо offset при новому запиті
-        if data == "admin_orders" or data == "admin_back_main" or data == "admin_messages":
+        if data == "admin_orders" or data == "admin_back_main" or data == "admin_messages" or data == "admin_customers":
             orders_offset.pop(user_id, None)
             messages_offset.pop(user_id, None)
         
-        # ===== ГОЛОВНЕ МЕНЮ =====
         if data == "admin_back_main":
             await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
             return
@@ -2405,7 +2015,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # ===== ЗАМОВЛЕННЯ =====
         elif data == "admin_orders":
             await query.edit_message_text("📋 Керування замовленнями\n\nОберіть тип замовлень:", reply_markup=get_orders_menu())
             return
@@ -2440,7 +2049,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for order in more_orders:
                 text += format_order_text(order) + f"{'─'*40}\n"
             
-            # Перевіряємо чи є ще замовлення
             next_orders = get_all_orders(include_quick=True, limit=1, offset=orders_offset.get(user_id, 0))
             has_more = len(next_orders) > 0
             
@@ -2480,8 +2088,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 type_prefix = "⚡" if order_type == 'quick' else "📦"
                 display_id = order.get('order_id', order.get('id', 'Н/Д'))
                 customer_name = order.get('user_name', 'Н/Д')
+                total = safe_get(order, 'total', 0)
                 keyboard.append([InlineKeyboardButton(
-                    f"{type_prefix} №{display_id} - {customer_name} - {order.get('total', 0):.0f} грн", 
+                    f"{type_prefix} №{display_id} - {customer_name} - {total:.0f} грн", 
                     callback_data=f"order_view_{display_id}_{order_type}"
                 )])
             keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_order_all")])
@@ -2676,25 +2285,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        elif data.startswith("order_review_"):
-            parts = data.split("_")
-            order_id = int(parts[2])
-            order_type = parts[3] if len(parts) > 3 else 'regular'
-            
-            order = get_order_by_id(order_id, order_type)
-            if order and order['user_id']:
-                if await send_review_request(order['user_id'], order_id):
-                    text = f"✅ Запит на відгук для замовлення №{order_id} надіслано!"
-                else:
-                    text = f"❌ Помилка при надсиланні запиту"
-            else:
-                text = "❌ Користувача не знайдено"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        # ===== ПОВІДОМЛЕННЯ =====
         elif data == "admin_messages":
             await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
             return
@@ -2737,7 +2327,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
                 text += f"{'─'*40}\n"
             
-            # Перевіряємо чи є ще повідомлення
             next_messages = get_all_messages(limit=1, offset=messages_offset.get(user_id, 0))
             has_more = len(next_messages) > 0
             
@@ -2758,6 +2347,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"{'─'*40}\n"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="admin_messages")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            return
+        
+        elif data == "admin_messages_details":
+            messages = get_all_messages(limit=50)
+            if not messages:
+                await query.edit_message_text("❌ Повідомлень не знайдено", reply_markup=get_messages_menu())
+                return
+            keyboard = []
+            for msg in messages[:20]:
+                user_name = msg['user_name']
+                msg_id = msg['id']
+                created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
+                text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
+                keyboard.append([InlineKeyboardButton(
+                    f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
+                    callback_data=f"message_view_{msg_id}"
+                )])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_messages")])
+            await query.edit_message_text("📋 Детальний перегляд повідомлень\n\nОберіть повідомлення:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         elif data.startswith("message_view_"):
@@ -2804,7 +2412,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("✅ Файл з повідомленнями згенеровано!", reply_markup=get_messages_back_keyboard())
             return
         
-        # ===== КЛІЄНТИ =====
         elif data == "admin_customers":
             await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
             return
@@ -2909,6 +2516,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
+        elif data == "export_customers":
+            users = get_all_users()
+            if not users:
+                await query.edit_message_text("❌ Немає клієнтів для експорту", reply_markup=get_customers_menu())
+                return
+            
+            file_data = generate_users_report(users)
+            await query.message.reply_document(
+                document=file_data,
+                filename=f"customers_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+                caption="👥 Повний звіт по клієнтах"
+            )
+            await query.edit_message_text("✅ Файл з клієнтами згенеровано!", reply_markup=get_customers_menu())
+            return
+        
         elif data == "admin_customer_search":
             admin_sessions[user_id] = {"state": "authenticated", "action": "search_customer_by_phone"}
             await query.edit_message_text("🔍 Пошук клієнта за телефоном\n\nВведіть номер телефону:", reply_markup=get_back_keyboard("admin_customers"))
@@ -3007,16 +2629,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📢 Надіслати повідомлення клієнту\n\nВведіть текст повідомлення:", reply_markup=get_back_keyboard(f"customer_view_{customer_id}"))
             return
         
-        elif data.startswith("customer_review_"):
-            customer_id = int(data.split("_")[2])
-            if await send_review_request(customer_id):
-                text = "✅ Запит на відгук надіслано!"
-            else:
-                text = "❌ Помилка при надсиланні запиту"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
         elif data.startswith("customer_make_admin_"):
             customer_id = int(data.split("_")[3])
             user = get_user_by_id(customer_id)
@@ -3031,7 +2643,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # ===== РОЗСИЛКИ =====
         elif data == "admin_broadcast":
             await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
             return
@@ -3042,40 +2653,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_back_keyboard("admin_broadcast"))
             return
         
-        # ===== ВІДГУКИ =====
-        elif data == "admin_reviews":
-            await query.edit_message_text("⭐ Керування відгуками\n\nОберіть дію:", reply_markup=get_reviews_menu())
-            return
-        
-        elif data == "recent_reviews":
-            reviews = get_all_reviews(limit=10)
-            if not reviews:
-                text = "⭐ Відгуків поки немає"
-            else:
-                text = format_reviews_text(reviews)
-            await query.edit_message_text(text, reply_markup=get_reviews_back_keyboard(), parse_mode='HTML')
-            return
-        
-        elif data == "reviews_count":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "reviews_count"}
-            await query.edit_message_text("🔢 Введіть кількість останніх відгуків для перегляду:", reply_markup=get_back_keyboard("admin_reviews"))
-            return
-        
-        elif data == "reviews_all_file":
-            reviews = get_all_reviews()
-            if not reviews:
-                await query.edit_message_text("⭐ Відгуків поки немає", reply_markup=get_reviews_back_keyboard())
-                return
-            file_data = generate_reviews_file(reviews)
-            await query.message.reply_document(
-                document=file_data,
-                filename=f"all_reviews_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="⭐ Всі відгуки клієнтів"
-            )
-            await query.edit_message_text("✅ Файл з відгуками згенеровано!", reply_markup=get_reviews_back_keyboard())
-            return
-        
-        # ===== ЗВІТИ =====
         elif data == "admin_reports":
             await query.edit_message_text("📁 Генерація звітів\n\nОберіть тип звіту та формат:", reply_markup=get_reports_menu())
             return
@@ -3104,7 +2681,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "report_users_txt":
             users = get_all_users()
-            report_data = generate_users_report(users, "txt")
+            report_data = generate_users_report(users)
             await query.message.reply_document(
                 document=report_data,
                 filename=f"users_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
@@ -3114,14 +2691,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data == "report_users_csv":
-            users = get_all_users()
-            report_data = generate_users_report(users, "csv")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"users_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
-                caption="👥 Звіт по клієнтах (CSV)"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+            await query.edit_message_text("Функція в розробці, використовуйте TXT формат", reply_markup=get_reports_menu())
             return
         
         elif data == "report_quick_txt":
@@ -3179,7 +2749,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
             return
         
-        # ===== АДМІНИ =====
         elif data == "admin_manage_admins":
             await query.edit_message_text("👑 Керування адміністраторами\n\nОберіть дію:", reply_markup=get_admins_menu())
             return
@@ -3227,7 +2796,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # ===== СТАТИСТИКА =====
         elif data == "admin_stats":
             stats = get_statistics()
             text = "📊 СТАТИСТИКА\n\n"
@@ -3236,8 +2804,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n"
             text += f"👥 Клієнтів: {stats.get('total_users', 0)}\n"
             text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
-            text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n"
-            text += f"⭐ Відгуків: {stats.get('total_reviews', 0)}\n\n"
+            text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
             text += "📊 Замовлення за останні 30 днів:\n"
             text += f"   Кількість: {stats.get('last_30_days_orders', 0)}\n"
             text += f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n"
@@ -3255,7 +2822,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # ===== НАЛАШТУВАННЯ =====
         elif data == "admin_settings":
             await query.edit_message_text("⚙️ Налаштування\n\nОберіть розділ:", reply_markup=get_settings_menu())
             return
@@ -3279,8 +2845,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except:
             pass
-
-# ==================== ОБРОБНИК ТЕКСТОВИХ ПОВІДОМЛЕНЬ ====================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -3447,7 +3011,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "send_message_to_customer":
             customer_id = session.get("customer_id")
             try:
-                # Створюємо окремого бота для основного бота
                 main_bot = Bot(token=MAIN_BOT_TOKEN)
                 
                 await main_bot.send_message(
@@ -3465,7 +3028,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             customer_id = session.get("user_id")
             order_id = session.get("order_id")
             try:
-                # Створюємо окремого бота для основного бота
                 main_bot = Bot(token=MAIN_BOT_TOKEN)
                 
                 await main_bot.send_message(
@@ -3488,7 +3050,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "reply_to_user":
             customer_id = session.get("customer_id")
             try:
-                # Створюємо окремого бота для основного бота
                 main_bot = Bot(token=MAIN_BOT_TOKEN)
                 
                 await main_bot.send_message(
@@ -3513,7 +3074,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(f"📢 Розпочинаю розсилку...")
             
-            # Створюємо окремого бота для адмін-бота (для відправки статусу адміну)
             admin_bot = Bot(token=TOKEN)
             
             if segment == "all":
@@ -3554,30 +3114,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-        elif action == "reviews_count":
-            try:
-                count = int(text)
-                if count <= 0:
-                    raise ValueError
-                reviews = get_all_reviews(limit=count)
-                if count > 20:
-                    file_data = generate_reviews_file(reviews)
-                    await update.message.reply_document(
-                        document=file_data,
-                        filename=f"reviews_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                        caption=f"⭐ {count} останніх відгуків"
-                    )
-                else:
-                    if reviews:
-                        text_response = format_reviews_text(reviews)
-                    else:
-                        text_response = "⭐ Відгуків поки немає"
-                    await update.message.reply_text(text_response, reply_markup=get_reviews_back_keyboard(), parse_mode='HTML')
-            except ValueError:
-                await update.message.reply_text("❌ Введіть коректне число більше 0", reply_markup=get_reviews_back_keyboard())
-            admin_sessions[user_id].pop("action", None)
-            return
-        
         elif action == "add_admin":
             try:
                 new_admin_id = int(text)
@@ -3605,7 +3141,155 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_menu()
         )
 
-# ==================== ОСНОВНА ФУНКЦІЯ ====================
+async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int = None):
+    users = get_all_users()
+    sent_count = 0
+    fail_count = 0
+    
+    if not users:
+        logger.warning("⚠️ Немає користувачів для розсилки")
+        if admin_user_id:
+            try:
+                await admin_bot.send_message(
+                    chat_id=admin_user_id,
+                    text="⚠️ Немає користувачів для розсилки",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
+        return 0, 0
+    
+    if admin_user_id:
+        try:
+            await admin_bot.send_message(
+                chat_id=admin_user_id,
+                text=f"📢 <b>Розпочато розсилку ВСІМ користувачам</b>\n\n👥 Всього: {len(users)}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+    
+    main_bot = Bot(token=MAIN_BOT_TOKEN)
+    
+    broadcast_in_progress[admin_user_id] = {"total": len(users), "sent": 0, "failed": 0}
+    
+    for i, user in enumerate(users):
+        try:
+            await main_bot.send_message(
+                chat_id=user['user_id'],
+                text=message,
+                parse_mode='HTML'
+            )
+            sent_count += 1
+            
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["sent"] = sent_count
+            
+            if admin_user_id and (i + 1) % 10 == 0:
+                try:
+                    await admin_bot.send_message(
+                        chat_id=admin_user_id,
+                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(users)} (✓ {sent_count} | ✗ {fail_count})",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            error_str = str(e)
+            if "Chat not found" in error_str or "bot was blocked" in error_str:
+                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
+            else:
+                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
+            fail_count += 1
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["failed"] = fail_count
+    
+    if admin_user_id and admin_user_id in broadcast_in_progress:
+        del broadcast_in_progress[admin_user_id]
+    
+    return sent_count, fail_count
+
+async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, admin_user_id: int = None):
+    users = get_all_users()
+    sent_count = 0
+    fail_count = 0
+    
+    if not users:
+        logger.warning("⚠️ Немає користувачів для розсилки")
+        return 0, 0
+    
+    filtered_users = []
+    segment_map = {
+        "vip": "👑 VIP клієнт",
+        "regular": "⭐ Постійний клієнт",
+        "new": "🆕 Новий клієнт",
+        "inactive": "💤 Неактивний клієнт",
+        "active": "📊 Активний клієнт"
+    }
+    
+    for user in users:
+        user_orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = user_orders + quick_orders
+        user_segment = get_customer_segment(user, all_orders)
+        
+        if segment in user_segment or (segment == "new" and "Новий" in user_segment):
+            filtered_users.append(user)
+    
+    if admin_user_id:
+        try:
+            segment_name = segment_map.get(segment, segment)
+            await admin_bot.send_message(
+                chat_id=admin_user_id,
+                text=f"📢 <b>Розпочато розсилку для {segment_name}</b>\n\n👥 Всього: {len(filtered_users)}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+    
+    main_bot = Bot(token=MAIN_BOT_TOKEN)
+    
+    broadcast_in_progress[admin_user_id] = {"total": len(filtered_users), "sent": 0, "failed": 0}
+    
+    for i, user in enumerate(filtered_users):
+        try:
+            await main_bot.send_message(
+                chat_id=user['user_id'],
+                text=message,
+                parse_mode='HTML'
+            )
+            sent_count += 1
+            
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["sent"] = sent_count
+            
+            if admin_user_id and (i + 1) % 10 == 0:
+                try:
+                    await admin_bot.send_message(
+                        chat_id=admin_user_id,
+                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(filtered_users)} (✓ {sent_count} | ✗ {fail_count})",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await asyncio.sleep(0.1)
+        except Exception as e:
+            error_str = str(e)
+            if "Chat not found" in error_str or "bot was blocked" in error_str:
+                logger.warning(f"⚠️ Користувач {user['user_id']} заблокував бота або неактивний")
+            else:
+                logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
+            fail_count += 1
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["failed"] = fail_count
+    
+    if admin_user_id and admin_user_id in broadcast_in_progress:
+        del broadcast_in_progress[admin_user_id]
+    
+    return sent_count, fail_count
 
 def main():
     logger.info("🚀 Запуск адмін-бота Бонелет...")
@@ -3626,14 +3310,12 @@ def main():
                 orders_count = cursor.fetchone()['count']
                 cursor.execute("SELECT COUNT(*) FROM products")
                 products_count = cursor.fetchone()['count']
-                cursor.execute("SELECT COUNT(*) FROM reviews")
-                reviews_count = cursor.fetchone()['count']
                 cursor.execute("SELECT COUNT(*) FROM quick_orders")
                 quick_orders_count = cursor.fetchone()['count']
                 cursor.execute("SELECT COUNT(*) FROM messages")
                 messages_count = cursor.fetchone()['count']
                 
-                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {quick_orders_count} швидких замовлень, {products_count} товарів, {messages_count} повідомлень, {reviews_count} відгуків")
+                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {quick_orders_count} швидких замовлень, {products_count} товарів, {messages_count} повідомлень")
                 
             except Exception as e:
                 logger.error(f"❌ Помилка отримання статистики: {e}")
