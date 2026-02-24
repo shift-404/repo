@@ -12,7 +12,7 @@ import asyncio
 import traceback
 import time
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -71,6 +71,11 @@ def format_kyiv_time(dt_str):
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not TOKEN:
     logger.error("❌ ADMIN_BOT_TOKEN не знайдено!")
+    sys.exit(1)
+
+MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not MAIN_BOT_TOKEN:
+    logger.error("❌ BOT_TOKEN не знайдено! Додайте BOT_TOKEN в змінні середовища")
     sys.exit(1)
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -281,7 +286,7 @@ def is_authenticated(user_id: int) -> bool:
 
 # ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ====================
 
-async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, order_data: dict):
+async def notify_admins_about_new_order(order_data: dict):
     """Відправляє сповіщення всім адмінам про нове замовлення"""
     try:
         conn = get_db_connection()
@@ -323,15 +328,19 @@ async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, orde
         
         message += f"\n🕒 <b>Час:</b> {format_kyiv_time(order_data.get('created_at'))}"
         
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📋 Детально", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}"),
-            InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_order_{order_id}_{order_data.get('order_type', 'regular')}")
-        ]])
+        # Клавіатура з кнопками для керування замовленням
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}")],
+            [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_{order_data.get('order_type', 'regular')}")]
+        ])
+        
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=TOKEN)
         
         sent_count = 0
         for admin in admins:
             try:
-                await context.bot.send_message(
+                await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
                     parse_mode='HTML',
@@ -348,9 +357,7 @@ async def notify_admins_about_new_order(context: ContextTypes.DEFAULT_TYPE, orde
         logger.error(f"❌ Помилка в notify_admins_about_new_order: {e}")
         logger.error(traceback.format_exc())
 
-# ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕНЬ АДМІНАМ ПРО ПОВІДОМЛЕННЯ ====================
-
-async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, message_data: dict):
+async def notify_admins_about_message(message_data: dict):
     """Відправляє сповіщення всім адмінам про нове повідомлення від користувача"""
     try:
         conn = get_db_connection()
@@ -374,15 +381,19 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
         message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
         message += f"🕒 <b>Час:</b> {format_kyiv_time(message_data.get('created_at'))}"
         
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("📋 Детально", callback_data=f"message_view_{message_data.get('id')}"),
-            InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_user_{message_data.get('user_id')}")
-        ]])
+        # Клавіатура з кнопками для відповіді
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_user_{message_data.get('user_id')}")],
+            [InlineKeyboardButton("👤 Профіль клієнта", callback_data=f"customer_view_{message_data.get('user_id')}")]
+        ])
+        
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=TOKEN)
         
         sent_count = 0
         for admin in admins:
             try:
-                await context.bot.send_message(
+                await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
                     parse_mode='HTML',
@@ -397,6 +408,62 @@ async def notify_admins_about_message(context: ContextTypes.DEFAULT_TYPE, messag
         
     except Exception as e:
         logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
+        logger.error(traceback.format_exc())
+
+async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
+    """Відправляє одне об'єднане сповіщення про швидке замовлення з повідомленням"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            return
+        
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM admins")
+        admins = cursor.fetchall()
+        conn.close()
+        
+        if not admins:
+            logger.warning("⚠️ Немає адмінів для сповіщення")
+            return
+        
+        # Формуємо ОДНЕ об'єднане повідомлення
+        message = f"🆕 <b>НОВЕ ⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
+        message += f"👤 <b>Клієнт:</b> {user_name}\n"
+        message += f"📱 <b>Username:</b> @{username}\n"
+        message += f"🆔 <b>User ID:</b> {user_id}\n"
+        message += f"📦 <b>Продукт:</b> {product_name}\n"
+        message += f"💬 <b>Спосіб зв'язку:</b> chat\n"
+        message += f"📝 <b>Повідомлення:</b> {message_text}\n"
+        message += f"🕒 <b>Час:</b> {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        # Клавіатура з кнопками для керування замовленням
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_quick")],
+            [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_quick")]
+        ])
+        
+        # Створюємо окремого бота для адмін-бота
+        admin_bot = Bot(token=TOKEN)
+        
+        sent_count = 0
+        for admin in admins:
+            try:
+                await admin_bot.send_message(
+                    chat_id=admin['user_id'],
+                    text=message,
+                    parse_mode='HTML',
+                    reply_markup=keyboard
+                )
+                sent_count += 1
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+        
+        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
         logger.error(traceback.format_exc())
 
 # ==================== ФУНКЦІЇ ДЛЯ ЗАМОВЛЕНЬ ====================
@@ -731,8 +798,8 @@ def get_order_by_id(order_id: int, order_type: str = 'regular'):
 
 # ==================== ФУНКЦІЯ ДЛЯ СПОВІЩЕННЯ КЛІЄНТА ПРО СТАТУС ====================
 
-async def notify_customer_about_status(context: ContextTypes.DEFAULT_TYPE, user_id: int, order_id: int, status: str):
-    """Відправляє повідомлення клієнту про зміну статусу замовлення"""
+async def notify_customer_about_status(user_id: int, order_id: int, status: str):
+    """Відправляє повідомлення клієнту про зміну статусу замовлення через основного бота"""
     try:
         status_messages = {
             "підтверджено": "✅ Ваше замовлення підтверджено! Ми розпочали його обробку.",
@@ -744,7 +811,10 @@ async def notify_customer_about_status(context: ContextTypes.DEFAULT_TYPE, user_
         
         message = status_messages.get(status, f"📊 Статус вашого замовлення змінено на: {status}")
         
-        await context.bot.send_message(
+        # Створюємо окремого бота для основного бота
+        main_bot = Bot(token=MAIN_BOT_TOKEN)
+        
+        await main_bot.send_message(
             chat_id=user_id,
             text=f"<b>Замовлення №{order_id}</b>\n\n{message}",
             parse_mode='HTML'
@@ -1158,20 +1228,29 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
 
 # ==================== ФУНКЦІЇ ДЛЯ РОЗСИЛОК ====================
 
-async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str, admin_user_id: int = None):
-    """Відправка розсилки ВСІМ користувачам"""
+async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int = None):
+    """Відправка розсилки ВСІМ користувачам через основного бота"""
     users = get_all_users()
     sent_count = 0
     fail_count = 0
     
     if not users:
         logger.warning("⚠️ Немає користувачів для розсилки")
+        if admin_user_id:
+            try:
+                await admin_bot.send_message(
+                    chat_id=admin_user_id,
+                    text="⚠️ Немає користувачів для розсилки",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
         return 0, 0
     
     # Відправляємо повідомлення про початок розсилки адміну
     if admin_user_id:
         try:
-            await context.bot.send_message(
+            await admin_bot.send_message(
                 chat_id=admin_user_id,
                 text=f"📢 <b>Розпочато розсилку ВСІМ користувачам</b>\n\n👥 Всього: {len(users)}",
                 parse_mode='HTML'
@@ -1179,14 +1258,16 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
         except:
             pass
     
+    # Створюємо окремого бота для основного бота
+    main_bot = Bot(token=MAIN_BOT_TOKEN)
+    
     # Створюємо словник для збереження прогресу
     broadcast_in_progress[admin_user_id] = {"total": len(users), "sent": 0, "failed": 0}
     
     for i, user in enumerate(users):
         try:
-            # Перевіряємо чи користувач ще активний (чи не заблокував бота)
-            await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
-            await context.bot.send_message(
+            # Відправляємо через основного бота
+            await main_bot.send_message(
                 chat_id=user['user_id'],
                 text=f"📢 <b>Оголошення</b>\n\n{message}",
                 parse_mode='HTML'
@@ -1200,7 +1281,7 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
             # Відправляємо статус кожні 10 повідомлень
             if admin_user_id and (i + 1) % 10 == 0:
                 try:
-                    await context.bot.send_message(
+                    await admin_bot.send_message(
                         chat_id=admin_user_id,
                         text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(users)} (✓ {sent_count} | ✗ {fail_count})",
                         parse_mode='HTML'
@@ -1225,8 +1306,8 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
     
     return sent_count, fail_count
 
-async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment: str, message: str, admin_user_id: int = None):
-    """Відправка розсилки по сегменту клієнтів"""
+async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, admin_user_id: int = None):
+    """Відправка розсилки по сегменту клієнтів через основного бота"""
     users = get_all_users()
     sent_count = 0
     fail_count = 0
@@ -1257,7 +1338,7 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
     if admin_user_id:
         try:
             segment_name = segment_map.get(segment, segment)
-            await context.bot.send_message(
+            await admin_bot.send_message(
                 chat_id=admin_user_id,
                 text=f"📢 <b>Розпочато розсилку для {segment_name}</b>\n\n👥 Всього: {len(filtered_users)}",
                 parse_mode='HTML'
@@ -1265,14 +1346,16 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
         except:
             pass
     
+    # Створюємо окремого бота для основного бота
+    main_bot = Bot(token=MAIN_BOT_TOKEN)
+    
     # Створюємо словник для збереження прогресу
     broadcast_in_progress[admin_user_id] = {"total": len(filtered_users), "sent": 0, "failed": 0}
     
     for i, user in enumerate(filtered_users):
         try:
-            # Перевіряємо чи користувач ще активний
-            await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
-            await context.bot.send_message(
+            # Відправляємо через основного бота
+            await main_bot.send_message(
                 chat_id=user['user_id'],
                 text=f"📢 <b>Оголошення</b>\n\n{message}",
                 parse_mode='HTML'
@@ -1286,7 +1369,7 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
             # Відправляємо статус кожні 10 повідомлень
             if admin_user_id and (i + 1) % 10 == 0:
                 try:
-                    await context.bot.send_message(
+                    await admin_bot.send_message(
                         chat_id=admin_user_id,
                         text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(filtered_users)} (✓ {sent_count} | ✗ {fail_count})",
                         parse_mode='HTML'
@@ -1313,8 +1396,8 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
 
 # ==================== ФУНКЦІЇ ДЛЯ ВІДГУКІВ ====================
 
-async def send_review_request(context: ContextTypes.DEFAULT_TYPE, user_id: int, order_id: int = None):
-    """Відправка запиту на відгук"""
+async def send_review_request(user_id: int, order_id: int = None):
+    """Відправка запиту на відгук через основного бота"""
     text = "⭐ <b>Ваша думка важлива для нас!</b>\n\n"
     text += "Будемо вдячні, якщо ви залишите відгук про наші продукти:\n\n"
     text += "• Якість товару\n"
@@ -1327,7 +1410,10 @@ async def send_review_request(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
         text = f"📦 <b>Замовлення #{order_id}</b>\n\n" + text
     
     try:
-        await context.bot.send_message(
+        # Створюємо окремого бота для основного бота
+        main_bot = Bot(token=MAIN_BOT_TOKEN)
+        
+        await main_bot.send_message(
             chat_id=user_id,
             text=text,
             parse_mode='HTML'
@@ -2499,7 +2585,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 order = get_order_by_id(order_id, order_type)
                 if order and order['user_id']:
-                    await notify_customer_about_status(context, order['user_id'], order_id, "підтверджено")
+                    await notify_customer_about_status(order['user_id'], order_id, "підтверджено")
             else:
                 text = f"❌ Помилка при підтвердженні замовлення"
             
@@ -2517,7 +2603,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 order = get_order_by_id(order_id, order_type)
                 if order and order['user_id']:
-                    await notify_customer_about_status(context, order['user_id'], order_id, "упаковано")
+                    await notify_customer_about_status(order['user_id'], order_id, "упаковано")
             else:
                 text = f"❌ Помилка при оновленні статусу"
             
@@ -2535,7 +2621,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 order = get_order_by_id(order_id, order_type)
                 if order and order['user_id']:
-                    await notify_customer_about_status(context, order['user_id'], order_id, "відправлено")
+                    await notify_customer_about_status(order['user_id'], order_id, "відправлено")
             else:
                 text = f"❌ Помилка при оновленні статусу"
             
@@ -2553,7 +2639,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 order = get_order_by_id(order_id, order_type)
                 if order and order['user_id']:
-                    await notify_customer_about_status(context, order['user_id'], order_id, "прибуло")
+                    await notify_customer_about_status(order['user_id'], order_id, "прибуло")
             else:
                 text = f"❌ Помилка при оновленні статусу"
             
@@ -2571,7 +2657,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 order = get_order_by_id(order_id, order_type)
                 if order and order['user_id']:
-                    await notify_customer_about_status(context, order['user_id'], order_id, "скасовано")
+                    await notify_customer_about_status(order['user_id'], order_id, "скасовано")
             else:
                 text = f"❌ Помилка при скасуванні замовлення"
             
@@ -2586,7 +2672,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             order = get_order_by_id(order_id, order_type)
             if order and order['user_id']:
-                if await send_review_request(context, order['user_id'], order_id):
+                if await send_review_request(order['user_id'], order_id):
                     text = f"✅ Запит на відгук для замовлення №{order_id} надіслано!"
                 else:
                     text = f"❌ Помилка при надсиланні запиту"
@@ -2912,7 +2998,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("customer_review_"):
             customer_id = int(data.split("_")[2])
-            if await send_review_request(context, customer_id):
+            if await send_review_request(customer_id):
                 text = "✅ Запит на відгук надіслано!"
             else:
                 text = "❌ Помилка при надсиланні запиту"
@@ -3350,7 +3436,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "send_message_to_customer":
             customer_id = session.get("customer_id")
             try:
-                await context.bot.send_message(
+                # Створюємо окремого бота для основного бота
+                main_bot = Bot(token=MAIN_BOT_TOKEN)
+                
+                await main_bot.send_message(
                     chat_id=customer_id,
                     text=f"📢 <b>Повідомлення від адміністратора</b>\n\n{text}",
                     parse_mode='HTML'
@@ -3365,7 +3454,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             customer_id = session.get("user_id")
             order_id = session.get("order_id")
             try:
-                await context.bot.send_message(
+                # Створюємо окремого бота для основного бота
+                main_bot = Bot(token=MAIN_BOT_TOKEN)
+                
+                await main_bot.send_message(
                     chat_id=customer_id,
                     text=f"📢 <b>Відповідь на замовлення №{order_id}</b>\n\n{text}",
                     parse_mode='HTML'
@@ -3385,7 +3477,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "reply_to_user":
             customer_id = session.get("customer_id")
             try:
-                await context.bot.send_message(
+                # Створюємо окремого бота для основного бота
+                main_bot = Bot(token=MAIN_BOT_TOKEN)
+                
+                await main_bot.send_message(
                     chat_id=customer_id,
                     text=f"📢 <b>Відповідь адміністратора</b>\n\n{text}",
                     parse_mode='HTML'
@@ -3407,20 +3502,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(f"📢 Розпочинаю розсилку...")
             
+            # Створюємо окремого бота для адмін-бота (для відправки статусу адміну)
+            admin_bot = Bot(token=TOKEN)
+            
             if segment == "all":
-                sent, failed = await send_broadcast_to_all(context, text, admin_user_id=user_id)
+                sent, failed = await send_broadcast_to_all(admin_bot, text, admin_user_id=user_id)
                 segment_name = "ВСІМ користувачам"
             elif segment == "vip":
-                sent, failed = await send_broadcast_to_segment(context, "vip", text, admin_user_id=user_id)
+                sent, failed = await send_broadcast_to_segment(admin_bot, "vip", text, admin_user_id=user_id)
                 segment_name = "👑 VIP клієнтам"
             elif segment == "regular":
-                sent, failed = await send_broadcast_to_segment(context, "regular", text, admin_user_id=user_id)
+                sent, failed = await send_broadcast_to_segment(admin_bot, "regular", text, admin_user_id=user_id)
                 segment_name = "⭐ Постійним клієнтам"
             elif segment == "new":
-                sent, failed = await send_broadcast_to_segment(context, "new", text, admin_user_id=user_id)
+                sent, failed = await send_broadcast_to_segment(admin_bot, "new", text, admin_user_id=user_id)
                 segment_name = "🆕 Новим клієнтам"
             elif segment == "inactive":
-                sent, failed = await send_broadcast_to_segment(context, "inactive", text, admin_user_id=user_id)
+                sent, failed = await send_broadcast_to_segment(admin_bot, "inactive", text, admin_user_id=user_id)
                 segment_name = "💤 Неактивним клієнтам"
             else:
                 sent, failed = 0, 0
