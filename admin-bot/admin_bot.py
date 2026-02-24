@@ -34,7 +34,7 @@ try:
     import pytz
     KYIV_TZ = pytz.timezone('Europe/Kyiv')
 except ImportError:
-    logger.warning("⚠️ Бібліотека pytz не встановлена, використовую UTC")
+    logger.warning("Бібліотека pytz не встановлена, використовую UTC")
     KYIV_TZ = None
 
 def get_kyiv_time():
@@ -62,12 +62,12 @@ def format_kyiv_time(dt_str):
 
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not TOKEN:
-    logger.error("❌ ADMIN_BOT_TOKEN не знайдено!")
+    logger.error("ADMIN_BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not MAIN_BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN не знайдено!")
+    logger.error("BOT_TOKEN не знайдено!")
     sys.exit(1)
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -75,7 +75,7 @@ ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    logger.error("❌ DATABASE_URL не знайдено!")
+    logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
 def get_db_connection():
@@ -83,7 +83,7 @@ def get_db_connection():
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
-        logger.error(f"❌ Помилка підключення до БД: {e}")
+        logger.error(f"Помилка підключення до БД: {e}")
         return None
 
 def init_database_if_empty():
@@ -188,6 +188,7 @@ def init_database_if_empty():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
+                image_url TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -207,6 +208,11 @@ def init_database_if_empty():
         except:
             pass
         
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
+        except:
+            pass
+        
         cursor.execute("SELECT COUNT(*) FROM products")
         count = cursor.fetchone()['count']
         
@@ -214,29 +220,29 @@ def init_database_if_empty():
             products = [
                 (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                 "банка", "🥫", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
                 
                 (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                 "банка", "🌶️", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
                 
                 (3, "Паштет з артишоку", 290, "паштети",
                  "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+                 "банка", "🍯", None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
             ]
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_url, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
         
         conn.commit()
-        logger.info("✅ Таблиці успішно створено/перевірено!")
+        logger.info("Таблиці успішно створено/перевірено!")
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка створення таблиць: {e}")
+        logger.error(f"Помилка створення таблиць: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -255,11 +261,34 @@ broadcast_in_progress = {}
 def is_authenticated(user_id: int) -> bool:
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
 
+async def reset_all_orders():
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM order_items")
+        cursor.execute("DELETE FROM orders")
+        cursor.execute("DELETE FROM quick_orders")
+        cursor.execute("DELETE FROM carts")
+        
+        conn.commit()
+        logger.info("Всі замовлення успішно видалено!")
+        return True
+    except Exception as e:
+        logger.error(f"Помилка видалення замовлень: {e}")
+        logger.error(traceback.format_exc())
+        return False
+    finally:
+        conn.close()
+
 async def notify_admins_about_new_order(order_data: dict):
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -268,7 +297,7 @@ async def notify_admins_about_new_order(order_data: dict):
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
         order_type = "⚡ ШВИДКЕ" if order_data.get('order_type') == 'quick' else "📦 ЗВИЧАЙНЕ"
@@ -315,19 +344,19 @@ async def notify_admins_about_new_order(order_data: dict):
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам")
+        logger.info(f"Сповіщення про замовлення #{order_id} відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в notify_admins_about_new_order: {e}")
+        logger.error(f"Помилка в notify_admins_about_new_order: {e}")
         logger.error(traceback.format_exc())
 
 async def notify_admins_about_message(message_data: dict):
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -336,7 +365,7 @@ async def notify_admins_about_message(message_data: dict):
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
         message = f"💬 <b>НОВЕ ПОВІДОМЛЕННЯ</b>\n\n"
@@ -365,19 +394,19 @@ async def notify_admins_about_message(message_data: dict):
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Сповіщення про повідомлення відправлено {sent_count} адмінам")
+        logger.info(f"Сповіщення про повідомлення відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в notify_admins_about_message: {e}")
+        logger.error(f"Помилка в notify_admins_about_message: {e}")
         logger.error(traceback.format_exc())
 
 async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
     try:
         conn = get_db_connection()
         if not conn:
-            logger.error("❌ Не вдалося підключитись до БД для отримання списку адмінів")
+            logger.error("Не вдалося підключитись до БД для отримання списку адмінів")
             return
         
         cursor = conn.cursor()
@@ -386,7 +415,7 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         conn.close()
         
         if not admins:
-            logger.warning("⚠️ Немає адмінів для сповіщення")
+            logger.warning("Немає адмінів для сповіщення")
             return
         
         message = f"🆕 <b>НОВЕ ⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id}</b>\n\n"
@@ -417,12 +446,12 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
                 sent_count += 1
                 await asyncio.sleep(0.1)
             except Exception as e:
-                logger.error(f"❌ Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
+                logger.error(f"Помилка відправки сповіщення адміну {admin['user_id']}: {e}")
         
-        logger.info(f"✅ Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
+        logger.info(f"Об'єднане сповіщення про швидке замовлення #{order_id} відправлено {sent_count} адмінам")
         
     except Exception as e:
-        logger.error(f"❌ Помилка в send_combined_quick_order_notification: {e}")
+        logger.error(f"Помилка в send_combined_quick_order_notification: {e}")
         logger.error(traceback.format_exc())
 
 def safe_get(order, key, default=0):
@@ -772,10 +801,10 @@ async def notify_customer_about_status(user_id: int, order_id: int, status: str)
             text=f"<b>Замовлення №{order_id}</b>\n\n{message}",
             parse_mode='HTML'
         )
-        logger.info(f"✅ Сповіщення про статус #{order_id} відправлено клієнту {user_id}")
+        logger.info(f"Сповіщення про статус #{order_id} відправлено клієнту {user_id}")
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка відправки сповіщення клієнту {user_id}: {e}")
+        logger.error(f"Помилка відправки сповіщення клієнту {user_id}: {e}")
         return False
 
 def get_all_messages(limit: int = 50, offset: int = 0):
@@ -800,7 +829,7 @@ def get_all_messages(limit: int = 50, offset: int = 0):
         
         return messages
     except Exception as e:
-        logger.error(f"❌ Помилка отримання повідомлень: {e}")
+        logger.error(f"Помилка отримання повідомлень: {e}")
         logger.error(traceback.format_exc())
         return []
     finally:
@@ -821,7 +850,7 @@ def get_message_by_id(message_id: int):
             return msg
         return None
     except Exception as e:
-        logger.error(f"❌ Помилка отримання повідомлення: {e}")
+        logger.error(f"Помилка отримання повідомлення: {e}")
         logger.error(traceback.format_exc())
         return None
     finally:
@@ -900,7 +929,7 @@ def get_messages_by_user(user_id: int):
         
         return messages
     except Exception as e:
-        logger.error(f"❌ Помилка отримання повідомлень користувача: {e}")
+        logger.error(f"Помилка отримання повідомлень користувача: {e}")
         logger.error(traceback.format_exc())
         return []
     finally:
@@ -1064,6 +1093,42 @@ def get_user_orders(user_id: int):
     finally:
         conn.close()
 
+def get_user_phones(user_id: int) -> list:
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        
+        phones = []
+        
+        cursor.execute('''
+            SELECT DISTINCT phone FROM orders 
+            WHERE user_id = %s AND phone IS NOT NULL AND phone != ''
+        ''', (user_id,))
+        order_phones = cursor.fetchall()
+        for row in order_phones:
+            if row['phone'] and row['phone'] not in phones:
+                phones.append(row['phone'])
+        
+        cursor.execute('''
+            SELECT DISTINCT phone FROM quick_orders 
+            WHERE user_id = %s AND phone IS NOT NULL AND phone != ''
+        ''', (user_id,))
+        quick_phones = cursor.fetchall()
+        for row in quick_phones:
+            if row['phone'] and row['phone'] not in phones:
+                phones.append(row['phone'])
+        
+        return phones
+    except Exception as e:
+        logger.error(f"Помилка отримання телефонів користувача: {e}")
+        logger.error(traceback.format_exc())
+        return []
+    finally:
+        conn.close()
+
 def get_user_messages(user_id: int):
     conn = get_db_connection()
     if not conn:
@@ -1177,7 +1242,7 @@ def get_all_products():
             products.append(product)
         return products
     except Exception as e:
-        logger.error(f"❌ Помилка отримання товарів: {e}")
+        logger.error(f"Помилка отримання товарів: {e}")
         logger.error(traceback.format_exc())
         return []
     finally:
@@ -1209,36 +1274,36 @@ def update_product(product_id: int, **kwargs):
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка оновлення товару: {e}")
+        logger.error(f"Помилка оновлення товару: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
-    logger.info(f"🔄 Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
+def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_url: str, details: str):
+    logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
     if not conn:
-        logger.error("❌ Не вдалося підключитись до БД")
+        logger.error("Не вдалося підключитись до БД")
         return None
     
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO products (name, price, category, description, unit, image, image_url, details)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        ''', (name, price, category, description, unit, image, details))
+        ''', (name, price, category, description, unit, image, image_url, details))
         
         result = cursor.fetchone()
         product_id = result['id'] if result else None
         conn.commit()
         
-        logger.info(f"✅ Товар додано з ID: {product_id}")
+        logger.info(f"Товар додано з ID: {product_id}")
         return product_id
     except Exception as e:
-        logger.error(f"❌ Помилка додавання товару: {e}")
+        logger.error(f"Помилка додавання товару: {e}")
         logger.error(traceback.format_exc())
         return None
     finally:
@@ -1255,7 +1320,7 @@ def delete_product(product_id: int):
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка видалення товару: {e}")
+        logger.error(f"Помилка видалення товару: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -1278,7 +1343,7 @@ def get_all_admins():
             admins.append(admin)
         return admins
     except Exception as e:
-        logger.error(f"❌ Помилка отримання адмінів: {e}")
+        logger.error(f"Помилка отримання адмінів: {e}")
         logger.error(traceback.format_exc())
         return []
     finally:
@@ -1301,7 +1366,7 @@ def add_admin(user_id: int, username: str = "", added_by: int = 0):
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка додавання адміна: {e}")
+        logger.error(f"Помилка додавання адміна: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -1318,7 +1383,7 @@ def remove_admin(user_id: int):
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"❌ Помилка видалення адміна: {e}")
+        logger.error(f"Помилка видалення адміна: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -1335,7 +1400,7 @@ def is_admin(user_id: int) -> bool:
         count = cursor.fetchone()['count']
         return count > 0
     except Exception as e:
-        logger.error(f"❌ Помилка перевірки адміна: {e}")
+        logger.error(f"Помилка перевірки адміна: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -1401,6 +1466,7 @@ def generate_users_report(users: list) -> bytes:
         quick_orders = get_user_quick_orders(user_id)
         messages = get_user_messages(user_id)
         all_orders = orders + quick_orders
+        phones = get_user_phones(user_id)
         
         segment = get_customer_segment(user, all_orders)
         
@@ -1410,13 +1476,21 @@ def generate_users_report(users: list) -> bytes:
         output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
         output.write(f"Сегмент: {segment}\n\n")
         
+        if phones:
+            output.write("📞 ТЕЛЕФОНИ:\n")
+            for i, phone in enumerate(phones, 1):
+                output.write(f"  {i}. {phone}\n")
+            output.write("\n")
+        
         output.write("📦 ЗАМОВЛЕННЯ:\n")
         output.write(f"  Всього замовлень: {len(all_orders)}\n")
         
         if all_orders:
             total_spent = sum(o.get('total', 0) for o in orders)
             output.write(f"  Загальна сума: {total_spent:.2f} грн\n")
-            output.write(f"  Середній чек: {total_spent/len(orders) if orders else 0:.2f} грн\n\n")
+            if orders:
+                output.write(f"  Середній чек: {total_spent/len(orders):.2f} грн\n")
+            output.write("\n")
             
             output.write("  Останні замовлення:\n")
             for i, order in enumerate(all_orders[:3], 1):
@@ -1425,7 +1499,10 @@ def generate_users_report(users: list) -> bytes:
                 created_at = order.get('created_at', '')[:16]
                 status = order.get('status', 'нове')
                 total = order.get('total', 0)
+                phone = order.get('phone', '')
                 output.write(f"    {i}. {order_type} №{order_id} | {created_at} | {total:.2f} грн | {status}\n")
+                if phone:
+                    output.write(f"       Телефон: {phone}\n")
                 if order.get('order_type') == 'quick' and order.get('message'):
                     output.write(f"       Повідомлення: {order.get('message')[:100]}\n")
                 elif order.get('order_type') == 'regular' and order.get('items'):
@@ -1437,8 +1514,8 @@ def generate_users_report(users: list) -> bytes:
         else:
             output.write("  Замовлень немає\n")
         
-        output.write(f"\n💬 ПОВІДОМЛЕННЯ: {len(messages)}\n")
         if messages:
+            output.write(f"\n💬 ПОВІДОМЛЕННЯ: {len(messages)}\n")
             output.write("  Останні повідомлення:\n")
             for i, msg in enumerate(messages[:3], 1):
                 created_at = msg.get('created_at', '')[:16]
@@ -1692,6 +1769,7 @@ def get_main_menu():
         [{"text": "📁 Звіти", "callback_data": "admin_reports"}],
         [{"text": "📢 Розсилки", "callback_data": "admin_broadcast"}],
         [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
+        [{"text": "🔄 Скинути замовлення", "callback_data": "admin_reset_orders"}],
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
@@ -1922,6 +2000,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("🔐 Ви вийшли з адмін-панелі\n\nДля повторного входу напишіть /start")
             return
         
+        elif data == "admin_reset_orders":
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Так, видалити всі замовлення", callback_data="confirm_reset_orders")],
+                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="admin_back_main")]
+            ])
+            await query.edit_message_text("⚠️ <b>Ви дійсно хочете видалити ВСІ замовлення?</b>\n\nКлієнти та товари залишаться, але всі замовлення будуть безповоротно видалені.", reply_markup=keyboard, parse_mode='HTML')
+            return
+        
+        elif data == "confirm_reset_orders":
+            success = await reset_all_orders()
+            if success:
+                text = "✅ Всі замовлення успішно видалено!"
+            else:
+                text = "❌ Помилка при видаленні замовлень"
+            await query.edit_message_text(text, reply_markup=get_main_menu())
+            return
+        
         elif data == "admin_products":
             await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
             return
@@ -1967,6 +2062,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
                 [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                 [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
+                [InlineKeyboardButton("📷 Фото URL", callback_data=f"edit_field_image_{product_id}")],
                 [InlineKeyboardButton("🔙 Назад", callback_data="admin_product_edit")]
             ]
             await query.edit_message_text(
@@ -1980,7 +2076,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             field = parts[2]
             product_id = int(parts[3])
             admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
-            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію"}
+            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію", "image": "фото URL"}
             await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard(f"edit_product_{product_id}"))
             return
         
@@ -2900,6 +2996,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "add_product_image":
             admin_sessions[user_id]["product_image"] = text
+            admin_sessions[user_id]["action"] = "add_product_image_url"
+            await update.message.reply_text("Введіть URL зображення для товару (або пропустіть, натиснувши Enter):", reply_markup=get_back_keyboard("admin_products"))
+            return
+        
+        elif action == "add_product_image_url":
+            admin_sessions[user_id]["product_image_url"] = text if text != "пропустити" and text != "-" else None
             admin_sessions[user_id]["action"] = "add_product_details"
             await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("admin_products"))
             return
@@ -2912,6 +3014,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "description": session.get("product_description"),
                 "unit": session.get("product_unit"),
                 "image": session.get("product_image"),
+                "image_url": session.get("product_image_url"),
                 "details": text
             }
             
@@ -2945,6 +3048,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 update_data["description"] = text
             elif field == "cat":
                 update_data["category"] = text
+            elif field == "image":
+                update_data["image_url"] = text
             
             if update_product(product_id, **update_data):
                 await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
@@ -3147,7 +3252,7 @@ async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int
     fail_count = 0
     
     if not users:
-        logger.warning("⚠️ Немає користувачів для розсилки")
+        logger.warning("Немає користувачів для розсилки")
         if admin_user_id:
             try:
                 await admin_bot.send_message(
@@ -3217,7 +3322,7 @@ async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, 
     fail_count = 0
     
     if not users:
-        logger.warning("⚠️ Немає користувачів для розсилки")
+        logger.warning("Немає користувачів для розсилки")
         return 0, 0
     
     filtered_users = []
