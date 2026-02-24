@@ -469,10 +469,11 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
 # ==================== ФУНКЦІЇ ДЛЯ ЗАМОВЛЕНЬ ====================
 
 def safe_get(order, key, default=0):
-    """Безпечне отримання значення зі словника"""
-    if key in order and order[key] is not None:
-        return order[key]
-    return default
+    """Безпечне отримання значення зі словника з перевіркою на None"""
+    value = order.get(key)
+    if value is None:
+        return default
+    return value
 
 def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 0):
     """Отримати всі замовлення з БД з пагінацією"""
@@ -593,23 +594,32 @@ def get_more_orders(user_id: int, count: int = 5):
     return orders
 
 def format_order_text(order: dict) -> str:
-    """Форматує текст замовлення для відображення"""
+    """Форматує текст замовлення для відображення з безпечним форматуванням"""
     order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
     order_id = order.get('order_id', order.get('id', 'Н/Д'))
     
-    text = f"{order_type} <b>№{order_id}</b> | {order['created_at'][:16]}\n"
-    text += f"👤 Клієнт: {order.get('user_name', 'Н/Д')}\n"
-    text += f"📞 Телефон: {order.get('phone', 'Н/Д')}\n"
+    # Безпечно отримуємо значення
+    user_name = order.get('user_name', 'Н/Д')
+    phone = order.get('phone', 'Н/Д')
+    total = safe_get(order, 'total', 0)
+    status = order.get('status', 'нове')
+    created_at = order.get('created_at', '')
+    
+    text = f"{order_type} <b>№{order_id}</b> | {created_at[:16] if created_at else 'Н/Д'}\n"
+    text += f"👤 Клієнт: {user_name}\n"
+    text += f"📞 Телефон: {phone}\n"
     
     if order.get('order_type') == 'quick':
-        text += f"📦 Продукт: {order.get('product_name', 'Н/Д')}\n"
+        product_name = order.get('product_name', 'Н/Д')
+        text += f"📦 Продукт: {product_name}\n"
         if order.get('message'):
-            text += f"💬 Повідомлення: {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
-        text += f"💰 Сума: {order.get('total', 0):.2f} грн\n"
+            msg = order.get('message', '')
+            text += f"💬 Повідомлення: {msg[:50]}{'...' if len(msg) > 50 else ''}\n"
+        text += f"💰 Сума: {total:.2f} грн\n"
     else:
-        text += f"💰 Сума: {order.get('total', 0):.2f} грн\n"
+        text += f"💰 Сума: {total:.2f} грн\n"
     
-    text += f"📊 Статус: {order.get('status', 'нове')}\n"
+    text += f"📊 Статус: {status}\n"
     return text
 
 def get_orders_by_phone(phone: str):
@@ -1266,10 +1276,10 @@ async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int
     
     for i, user in enumerate(users):
         try:
-            # Відправляємо через основного бота
+            # Відправляємо через основного бота - ТІЛЬКИ ТЕКСТ, без додаткового тексту
             await main_bot.send_message(
                 chat_id=user['user_id'],
-                text=f"📢 <b>Оголошення</b>\n\n{message}",
+                text=message,  # Тільки текст, який ввів адмін
                 parse_mode='HTML'
             )
             sent_count += 1
@@ -1354,10 +1364,10 @@ async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, 
     
     for i, user in enumerate(filtered_users):
         try:
-            # Відправляємо через основного бота
+            # Відправляємо через основного бота - ТІЛЬКИ ТЕКСТ, без додаткового тексту
             await main_bot.send_message(
                 chat_id=user['user_id'],
-                text=f"📢 <b>Оголошення</b>\n\n{message}",
+                text=message,  # Тільки текст, який ввів адмін
                 parse_mode='HTML'
             )
             sent_count += 1
@@ -2201,6 +2211,7 @@ def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
     buttons = []
     if has_more:
         buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
+    buttons.append([{"text": "🔍 Детально", "callback_data": "admin_order_details"}])
     buttons.append([{"text": "🔙 Назад до меню", "callback_data": "admin_orders"}])
     return create_inline_keyboard(buttons)
 
