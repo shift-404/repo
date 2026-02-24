@@ -273,6 +273,7 @@ admin_sessions = {}
 last_password_check = {}
 orders_offset = {}  # Для пагінації замовлень
 messages_offset = {}  # Для пагінації повідомлень
+broadcast_in_progress = {}  # Для відстеження прогресу розсилки
 
 def is_authenticated(user_id: int) -> bool:
     """Перевіряє чи авторизований адмін"""
@@ -1157,7 +1158,7 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
 
 # ==================== ФУНКЦІЇ ДЛЯ РОЗСИЛОК ====================
 
-async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str):
+async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str, admin_user_id: int = None):
     """Відправка розсилки ВСІМ користувачам"""
     users = get_all_users()
     sent_count = 0
@@ -1167,7 +1168,21 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
         logger.warning("⚠️ Немає користувачів для розсилки")
         return 0, 0
     
-    for user in users:
+    # Відправляємо повідомлення про початок розсилки адміну
+    if admin_user_id:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_user_id,
+                text=f"📢 <b>Розпочато розсилку ВСІМ користувачам</b>\n\n👥 Всього: {len(users)}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+    
+    # Створюємо словник для збереження прогресу
+    broadcast_in_progress[admin_user_id] = {"total": len(users), "sent": 0, "failed": 0}
+    
+    for i, user in enumerate(users):
         try:
             # Перевіряємо чи користувач ще активний (чи не заблокував бота)
             await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
@@ -1177,7 +1192,23 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
                 parse_mode='HTML'
             )
             sent_count += 1
-            await asyncio.sleep(0.05)
+            
+            # Оновлюємо прогрес
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["sent"] = sent_count
+            
+            # Відправляємо статус кожні 10 повідомлень
+            if admin_user_id and (i + 1) % 10 == 0:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_user_id,
+                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(users)} (✓ {sent_count} | ✗ {fail_count})",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await asyncio.sleep(0.1)  # Невелика затримка, щоб не флудити
         except Exception as e:
             error_str = str(e)
             if "Chat not found" in error_str or "bot was blocked" in error_str:
@@ -1185,10 +1216,16 @@ async def send_broadcast_to_all(context: ContextTypes.DEFAULT_TYPE, message: str
             else:
                 logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
             fail_count += 1
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["failed"] = fail_count
+    
+    # Видаляємо інформацію про прогрес після завершення
+    if admin_user_id and admin_user_id in broadcast_in_progress:
+        del broadcast_in_progress[admin_user_id]
     
     return sent_count, fail_count
 
-async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment: str, message: str):
+async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment: str, message: str, admin_user_id: int = None):
     """Відправка розсилки по сегменту клієнтів"""
     users = get_all_users()
     sent_count = 0
@@ -1198,23 +1235,66 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
         logger.warning("⚠️ Немає користувачів для розсилки")
         return 0, 0
     
+    # Фільтруємо користувачів за сегментом
+    filtered_users = []
+    segment_map = {
+        "vip": "👑 VIP клієнт",
+        "regular": "⭐ Постійний клієнт",
+        "new": "🆕 Новий клієнт",
+        "inactive": "💤 Неактивний клієнт",
+        "active": "📊 Активний клієнт"
+    }
+    
     for user in users:
+        user_orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = user_orders + quick_orders
+        user_segment = get_customer_segment(user, all_orders)
+        
+        if segment in user_segment or (segment == "new" and "Новий" in user_segment):
+            filtered_users.append(user)
+    
+    if admin_user_id:
         try:
-            user_orders = get_user_orders(user['user_id'])
-            quick_orders = get_user_quick_orders(user['user_id'])
-            all_orders = user_orders + quick_orders
-            user_segment = get_customer_segment(user, all_orders)
+            segment_name = segment_map.get(segment, segment)
+            await context.bot.send_message(
+                chat_id=admin_user_id,
+                text=f"📢 <b>Розпочато розсилку для {segment_name}</b>\n\n👥 Всього: {len(filtered_users)}",
+                parse_mode='HTML'
+            )
+        except:
+            pass
+    
+    # Створюємо словник для збереження прогресу
+    broadcast_in_progress[admin_user_id] = {"total": len(filtered_users), "sent": 0, "failed": 0}
+    
+    for i, user in enumerate(filtered_users):
+        try:
+            # Перевіряємо чи користувач ще активний
+            await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
+            await context.bot.send_message(
+                chat_id=user['user_id'],
+                text=f"📢 <b>Оголошення</b>\n\n{message}",
+                parse_mode='HTML'
+            )
+            sent_count += 1
             
-            if segment == "all" or segment in user_segment:
-                # Перевіряємо чи користувач ще активний
-                await context.bot.send_chat_action(chat_id=user['user_id'], action="typing")
-                await context.bot.send_message(
-                    chat_id=user['user_id'],
-                    text=f"📢 <b>Оголошення</b>\n\n{message}",
-                    parse_mode='HTML'
-                )
-                sent_count += 1
-                await asyncio.sleep(0.05)
+            # Оновлюємо прогрес
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["sent"] = sent_count
+            
+            # Відправляємо статус кожні 10 повідомлень
+            if admin_user_id and (i + 1) % 10 == 0:
+                try:
+                    await context.bot.send_message(
+                        chat_id=admin_user_id,
+                        text=f"📢 <b>Прогрес розсилки:</b> {i + 1}/{len(filtered_users)} (✓ {sent_count} | ✗ {fail_count})",
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await asyncio.sleep(0.1)
         except Exception as e:
             error_str = str(e)
             if "Chat not found" in error_str or "bot was blocked" in error_str:
@@ -1222,6 +1302,12 @@ async def send_broadcast_to_segment(context: ContextTypes.DEFAULT_TYPE, segment:
             else:
                 logger.error(f"Помилка відправки користувачу {user['user_id']}: {e}")
             fail_count += 1
+            if admin_user_id and admin_user_id in broadcast_in_progress:
+                broadcast_in_progress[admin_user_id]["failed"] = fail_count
+    
+    # Видаляємо інформацію про прогрес після завершення
+    if admin_user_id and admin_user_id in broadcast_in_progress:
+        del broadcast_in_progress[admin_user_id]
     
     return sent_count, fail_count
 
@@ -3319,16 +3405,35 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "broadcast":
             segment = session.get("segment")
             
+            await update.message.reply_text(f"📢 Розпочинаю розсилку...")
+            
             if segment == "all":
-                await update.message.reply_text(f"📢 Починаю розсилку для ВСІХ користувачів...")
-                sent, failed = await send_broadcast_to_all(context, text)
+                sent, failed = await send_broadcast_to_all(context, text, admin_user_id=user_id)
+                segment_name = "ВСІМ користувачам"
+            elif segment == "vip":
+                sent, failed = await send_broadcast_to_segment(context, "vip", text, admin_user_id=user_id)
+                segment_name = "👑 VIP клієнтам"
+            elif segment == "regular":
+                sent, failed = await send_broadcast_to_segment(context, "regular", text, admin_user_id=user_id)
+                segment_name = "⭐ Постійним клієнтам"
+            elif segment == "new":
+                sent, failed = await send_broadcast_to_segment(context, "new", text, admin_user_id=user_id)
+                segment_name = "🆕 Новим клієнтам"
+            elif segment == "inactive":
+                sent, failed = await send_broadcast_to_segment(context, "inactive", text, admin_user_id=user_id)
+                segment_name = "💤 Неактивним клієнтам"
             else:
-                await update.message.reply_text(f"📢 Починаю розсилку для сегменту: {segment}...")
-                sent, failed = await send_broadcast_to_segment(context, segment, text)
+                sent, failed = 0, 0
+                segment_name = segment
             
             await update.message.reply_text(
-                f"✅ Розсилка завершена!\n\n✓ Доставлено: {sent}\n✗ Помилок: {failed}",
-                reply_markup=get_broadcast_menu()
+                f"✅ <b>Розсилка завершена!</b>\n\n"
+                f"📢 Сегмент: {segment_name}\n"
+                f"✓ Доставлено: {sent}\n"
+                f"✗ Помилок: {failed}\n\n"
+                f"<i>Детальний звіт у логах</i>",
+                reply_markup=get_broadcast_menu(),
+                parse_mode='HTML'
             )
             admin_sessions[user_id].pop("action", None)
             return
