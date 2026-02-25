@@ -11,7 +11,6 @@ from io import StringIO, BytesIO
 import asyncio
 import traceback
 import time
-import requests
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
@@ -215,6 +214,11 @@ def init_database_if_empty():
         
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
+        except:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
         except:
             pass
         
