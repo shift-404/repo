@@ -12,7 +12,7 @@ import asyncio
 import traceback
 import time
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, InputMediaPhoto
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -192,7 +192,7 @@ def init_database_if_empty():
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
                 image_path TEXT,
-                image_url TEXT,
+                image_file_id TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -218,7 +218,7 @@ def init_database_if_empty():
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
         except:
             pass
         
@@ -242,7 +242,7 @@ def init_database_if_empty():
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_url, details)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_file_id, details)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
@@ -1301,7 +1301,7 @@ def update_product(product_id: int, **kwargs):
     finally:
         conn.close()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_path: str, image_url: str, details: str):
+def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_path: str, image_file_id: str, details: str):
     logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
@@ -1312,10 +1312,10 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, image_path, image_url, details)
+            INSERT INTO products (name, price, category, description, unit, image, image_path, image_file_id, details)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        ''', (name, price, category, description, unit, image, image_path, image_url, details))
+        ''', (name, price, category, description, unit, image, image_path, image_file_id, details))
         
         result = cursor.fetchone()
         product_id = result['id'] if result else None
@@ -1852,6 +1852,34 @@ def get_messages_menu():
     ]
     return create_inline_keyboard(keyboard)
 
+def get_messages_recent_details_keyboard(messages: list) -> InlineKeyboardMarkup:
+    keyboard = []
+    for msg in messages[:10]:
+        user_name = msg['user_name']
+        msg_id = msg['id']
+        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
+        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
+        keyboard.append([InlineKeyboardButton(
+            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
+            callback_data=f"message_view_{msg_id}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
+    return create_inline_keyboard(keyboard)
+
+def get_messages_all_details_keyboard(messages: list) -> InlineKeyboardMarkup:
+    keyboard = []
+    for msg in messages[:20]:
+        user_name = msg['user_name']
+        msg_id = msg['id']
+        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
+        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
+        keyboard.append([InlineKeyboardButton(
+            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
+            callback_data=f"message_view_{msg_id}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
+    return create_inline_keyboard(keyboard)
+
 def get_broadcast_menu():
     keyboard = [
         [{"text": "📢 Всім клієнтам", "callback_data": "broadcast_all"}],
@@ -1863,8 +1891,8 @@ def get_broadcast_menu():
     ]
     return create_inline_keyboard(keyboard)
 
-def get_broadcast_input_back_keyboard(segment: str) -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_broadcast_menu"}]]
+def get_broadcast_input_back_keyboard() -> InlineKeyboardMarkup:
+    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_broadcast"}]]
     return create_inline_keyboard(buttons)
 
 def get_reports_menu():
@@ -1970,6 +1998,13 @@ def get_messages_back_keyboard() -> InlineKeyboardMarkup:
     buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_messages"}]]
     return create_inline_keyboard(buttons)
 
+def get_product_image_keyboard(product_id: int, has_image: bool = False) -> InlineKeyboardMarkup:
+    buttons = []
+    if has_image:
+        buttons.append([{"text": "🗑 Видалити фото", "callback_data": f"delete_product_image_{product_id}"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": f"edit_product_{product_id}"}])
+    return create_inline_keyboard(buttons)
+
 def is_authenticated(user_id: int) -> bool:
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
 
@@ -2039,7 +2074,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
                 return
             
-            elif target == "broadcast_menu":
+            elif target == "broadcast":
                 await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
                 return
             
@@ -2132,9 +2167,43 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = data.split("_")
             field = parts[2]
             product_id = int(parts[3])
+            
+            if field == "image":
+                product = get_product_by_id(product_id)
+                has_image = product and product.get('image_file_id') is not None
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_image", "product_id": product_id}
+                await query.edit_message_text(
+                    "📷 Надішліть нове фото товару:",
+                    reply_markup=get_product_image_keyboard(product_id, has_image)
+                )
+                return
+            
             admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
-            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію", "image": "фото"}
+            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію"}
             await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
+            return
+        
+        elif data.startswith("delete_product_image_"):
+            product_id = int(data.split("_")[3])
+            product = get_product_by_id(product_id)
+            
+            if product and product.get('image_path'):
+                try:
+                    if os.path.exists(product['image_path']):
+                        os.remove(product['image_path'])
+                except:
+                    pass
+            
+            if update_product(product_id, image_path=None, image_file_id=None):
+                await query.edit_message_text(
+                    f"✅ Фото товару #{product_id} видалено!",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ Помилка при видаленні фото",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
             return
         
         elif data == "admin_product_delete":
@@ -2809,7 +2878,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("broadcast_"):
             segment = data.replace("broadcast_", "")
             admin_sessions[user_id] = {"state": "authenticated", "action": "broadcast", "segment": segment}
-            await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_broadcast_input_back_keyboard(segment))
+            await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_broadcast_input_back_keyboard())
             return
         
         elif data == "admin_reports":
@@ -3068,12 +3137,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_id = update.message.photo[-1].file_id
                 image_path = await download_telegram_file(file_id, context.bot)
                 admin_sessions[user_id]["product_image_path"] = image_path
-                admin_sessions[user_id]["product_image_url"] = file_id
+                admin_sessions[user_id]["product_image_file_id"] = file_id
                 admin_sessions[user_id]["action"] = "add_product_details"
                 await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             elif text.lower() == "пропустити" or text == "-":
                 admin_sessions[user_id]["product_image_path"] = None
-                admin_sessions[user_id]["product_image_url"] = None
+                admin_sessions[user_id]["product_image_file_id"] = None
                 admin_sessions[user_id]["action"] = "add_product_details"
                 await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             else:
@@ -3089,7 +3158,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "unit": session.get("product_unit"),
                 "image": session.get("product_image"),
                 "image_path": session.get("product_image_path"),
-                "image_url": session.get("product_image_url"),
+                "image_file_id": session.get("product_image_file_id"),
                 "details": text
             }
             
@@ -3159,7 +3228,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 image_path = await download_telegram_file(file_id, context.bot)
                 if image_path:
-                    update_data = {"image_path": image_path, "image_url": file_id}
+                    update_data = {"image_path": image_path, "image_file_id": file_id}
                     
                     if update_product(product_id, **update_data):
                         await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено!", reply_markup=get_products_menu())
