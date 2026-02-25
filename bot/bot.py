@@ -1227,33 +1227,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             back_target = data[5:]
             if back_target == "main_menu":
                 welcome = get_welcome_text()
-                await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="main_menu")
             elif back_target == "products":
                 products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
-                await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="products")
             elif back_target == "faq":
                 faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
-                await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="faq")
             elif back_target == "contact":
                 contact_text = get_contact_text()
-                await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="contact")
             elif back_target == "cart":
                 cart_items = Database.get_cart_items(user_id)
                 cart_text = get_cart_text(cart_items)
-                await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="cart")
             elif back_target == "my_orders":
                 orders = Database.get_user_orders(user_id)
                 text = get_my_orders_text(orders)
-                await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="my_orders")
             else:
                 welcome = get_welcome_text()
-                await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                try:
+                    await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="main_menu")
         
         elif data == "company":
