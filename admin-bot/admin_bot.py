@@ -266,7 +266,6 @@ last_password_check = {}
 orders_offset = {}
 messages_offset = {}
 broadcast_in_progress = {}
-current_menu = {}
 
 def is_authenticated(user_id: int) -> bool:
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
@@ -1286,8 +1285,13 @@ def update_product(product_id: int, **kwargs):
         fields = []
         values = []
         for key, value in kwargs.items():
-            fields.append(f"{key} = %s")
-            values.append(value)
+            if value is not None:
+                fields.append(f"{key} = %s")
+                values.append(value)
+        
+        if not fields:
+            logger.warning(f"Спроба оновити товар #{product_id} без даних")
+            return False
         
         values.append(product_id)
         query = f"UPDATE products SET {', '.join(fields)} WHERE id = %s"
@@ -1852,34 +1856,6 @@ def get_messages_menu():
     ]
     return create_inline_keyboard(keyboard)
 
-def get_messages_recent_details_keyboard(messages: list) -> InlineKeyboardMarkup:
-    keyboard = []
-    for msg in messages[:10]:
-        user_name = msg['user_name']
-        msg_id = msg['id']
-        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
-        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
-        keyboard.append([InlineKeyboardButton(
-            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
-            callback_data=f"message_view_{msg_id}"
-        )])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
-    return create_inline_keyboard(keyboard)
-
-def get_messages_all_details_keyboard(messages: list) -> InlineKeyboardMarkup:
-    keyboard = []
-    for msg in messages[:20]:
-        user_name = msg['user_name']
-        msg_id = msg['id']
-        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
-        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
-        keyboard.append([InlineKeyboardButton(
-            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
-            callback_data=f"message_view_{msg_id}"
-        )])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
-    return create_inline_keyboard(keyboard)
-
 def get_broadcast_menu():
     keyboard = [
         [{"text": "📢 Всім клієнтам", "callback_data": "broadcast_all"}],
@@ -1892,7 +1868,7 @@ def get_broadcast_menu():
     return create_inline_keyboard(keyboard)
 
 def get_broadcast_input_back_keyboard() -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_broadcast"}]]
+    buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_broadcast"}]]
     return create_inline_keyboard(buttons)
 
 def get_reports_menu():
@@ -1985,19 +1961,6 @@ def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
     buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_messages"}])
     return create_inline_keyboard(buttons)
 
-def get_reply_keyboard(order_id: int = None, user_id: int = None):
-    buttons = []
-    if order_id:
-        buttons.append([{"text": "📦 Переглянути замовлення", "callback_data": f"order_view_{order_id}"}])
-    if user_id:
-        buttons.append([{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_main"}])
-    return create_inline_keyboard(buttons)
-
-def get_messages_back_keyboard() -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_messages"}]]
-    return create_inline_keyboard(buttons)
-
 def get_product_image_keyboard(product_id: int, has_image: bool = False) -> InlineKeyboardMarkup:
     buttons = []
     if has_image:
@@ -2056,32 +2019,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Обробка кнопок "Назад"
         if data.startswith("back_to_"):
-            target = data[8:]  # Видаляємо "back_to_"
+            target = data[8:]
             
             if target == "main":
                 await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
                 return
-            
             elif target == "orders":
                 await query.edit_message_text("📋 Керування замовленнями\n\nОберіть тип замовлень:", reply_markup=get_orders_menu())
                 return
-            
             elif target == "customers":
                 await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
                 return
-            
             elif target == "messages":
                 await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
                 return
-            
             elif target == "broadcast":
                 await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
                 return
-            
             elif target == "products":
                 await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
                 return
-            
             else:
                 await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
                 return
@@ -3175,39 +3132,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-        elif action.startswith("edit_product_"):
-            field = action.replace("edit_product_", "")
-            product_id = session.get("product_id")
-            
-            if field == "image":
-                admin_sessions[user_id]["action"] = "edit_product_image_upload"
-                admin_sessions[user_id]["product_id"] = product_id
-                await update.message.reply_text("📷 Надішліть нове фото товару:", reply_markup=get_back_keyboard("products"))
-                return
-            
-            update_data = {}
-            if field == "name":
-                update_data["name"] = text
-            elif field == "price":
-                try:
-                    update_data["price"] = float(text.replace(",", "."))
-                except ValueError:
-                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard("products"))
-                    return
-            elif field == "desc":
-                update_data["description"] = text
-            elif field == "cat":
-                update_data["category"] = text
-            
-            if update_product(product_id, **update_data):
-                await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
-            else:
-                await update.message.reply_text("❌ Помилка при оновленні товару", reply_markup=get_products_menu())
-            
-            admin_sessions[user_id].pop("action", None)
-            return
-        
-        elif action == "edit_product_image_upload":
+        elif action == "edit_product_image":
             product_id = session.get("product_id")
             if not product_id:
                 await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
@@ -3239,6 +3164,36 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
                 return
+            
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action.startswith("edit_product_"):
+            field = action.replace("edit_product_", "")
+            product_id = session.get("product_id")
+            
+            update_data = {}
+            if field == "name":
+                update_data["name"] = text
+            elif field == "price":
+                try:
+                    update_data["price"] = float(text.replace(",", "."))
+                except ValueError:
+                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard("products"))
+                    return
+            elif field == "desc":
+                update_data["description"] = text
+            elif field == "cat":
+                update_data["category"] = text
+            else:
+                await update.message.reply_text("❌ Невідоме поле для редагування", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
+            if update_product(product_id, **update_data):
+                await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
+            else:
+                await update.message.reply_text("❌ Помилка при оновленні товару", reply_markup=get_products_menu())
             
             admin_sessions[user_id].pop("action", None)
             return
