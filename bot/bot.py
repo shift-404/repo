@@ -155,7 +155,7 @@ def init_database():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
-                image_url TEXT,
+                image_file_id TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -176,7 +176,7 @@ def init_database():
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
         except:
             pass
         
@@ -200,7 +200,7 @@ def init_database():
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_url, details)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_file_id, details)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
@@ -773,7 +773,7 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
-                    "image_url": row.get('image_url'),
+                    "image_file_id": row.get('image_file_id'),
                     "details": row['details']
                 })
             return products
@@ -913,8 +913,6 @@ def get_products_menu() -> InlineKeyboardMarkup:
     buttons = []
     for product in PRODUCTS:
         button_text = f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}"
-        if product.get('image_url'):
-            button_text = f"🖼️ {product['name']} - {product['price']} грн/{product['unit']}"
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1292,11 +1290,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product = get_product_by_id(product_id)
             product_text = get_product_text(product_id)
             
-            if product and product.get('image_url'):
+            if product and product.get('image_file_id'):
                 try:
                     await context.bot.send_photo(
                         chat_id=chat_id,
-                        photo=product['image_url'],
+                        photo=product['image_file_id'],
                         caption=product_text,
                         parse_mode='HTML',
                         reply_markup=get_product_detail_menu(product_id)
