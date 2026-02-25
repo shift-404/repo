@@ -1334,8 +1334,9 @@ def delete_product(product_id: int):
     product = get_product_by_id(product_id)
     if product and product.get('image_path'):
         try:
-            os.remove(product['image_path'])
-            logger.info(f"Видалено файл зображення: {product['image_path']}")
+            if os.path.exists(product['image_path']):
+                os.remove(product['image_path'])
+                logger.info(f"Видалено файл зображення: {product['image_path']}")
         except Exception as e:
             logger.error(f"Помилка видалення файлу зображення: {e}")
     
@@ -1805,7 +1806,7 @@ def get_main_menu():
     return create_inline_keyboard(keyboard)
 
 def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_{back_to}"}]]
+    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_{back_to}"}]]
     return create_inline_keyboard(buttons)
 
 def get_products_menu():
@@ -1814,7 +1815,7 @@ def get_products_menu():
         [{"text": "➕ Додати товар", "callback_data": "admin_product_add"}],
         [{"text": "✏️ Редагувати товар", "callback_data": "admin_product_edit"}],
         [{"text": "🗑 Видалити товар", "callback_data": "admin_product_delete"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1825,7 +1826,7 @@ def get_orders_menu():
         [{"text": "🆕 Нові замовлення", "callback_data": "admin_order_new"}],
         [{"text": "⚡ Швидкі замовлення", "callback_data": "admin_order_quick"}],
         [{"text": "📞 Пошук за телефоном", "callback_data": "admin_order_by_phone"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1838,7 +1839,7 @@ def get_customers_menu():
         [{"text": "🆕 Нові клієнти", "callback_data": "admin_customers_new"}],
         [{"text": "💤 Неактивні клієнти", "callback_data": "admin_customers_inactive"}],
         [{"text": "📁 Вивантажити клієнтів", "callback_data": "export_customers"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1847,36 +1848,8 @@ def get_messages_menu():
         [{"text": "📋 Останні повідомлення", "callback_data": "admin_messages_recent"}],
         [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
         [{"text": "📁 Всі повідомлення файлом", "callback_data": "messages_all_file"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
-    return create_inline_keyboard(keyboard)
-
-def get_messages_recent_details_keyboard(messages: list) -> InlineKeyboardMarkup:
-    keyboard = []
-    for msg in messages[:10]:
-        user_name = msg['user_name']
-        msg_id = msg['id']
-        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
-        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
-        keyboard.append([InlineKeyboardButton(
-            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
-            callback_data=f"message_view_{msg_id}"
-        )])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_messages")])
-    return create_inline_keyboard(keyboard)
-
-def get_messages_all_details_keyboard(messages: list) -> InlineKeyboardMarkup:
-    keyboard = []
-    for msg in messages[:20]:
-        user_name = msg['user_name']
-        msg_id = msg['id']
-        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
-        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
-        keyboard.append([InlineKeyboardButton(
-            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
-            callback_data=f"message_view_{msg_id}"
-        )])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_messages")])
     return create_inline_keyboard(keyboard)
 
 def get_broadcast_menu():
@@ -1886,12 +1859,12 @@ def get_broadcast_menu():
         [{"text": "⭐ Постійним клієнтам", "callback_data": "broadcast_regular"}],
         [{"text": "🆕 Новим клієнтам", "callback_data": "broadcast_new"}],
         [{"text": "💤 Неактивним клієнтам", "callback_data": "broadcast_inactive"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
 def get_broadcast_input_back_keyboard(segment: str) -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_broadcast_{segment}"}]]
+    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_broadcast_menu"}]]
     return create_inline_keyboard(buttons)
 
 def get_reports_menu():
@@ -1905,7 +1878,7 @@ def get_reports_menu():
         [{"text": "💬 Повідомлення (TXT)", "callback_data": "report_messages_txt"}],
         [{"text": "💬 Повідомлення (CSV)", "callback_data": "report_messages_csv"}],
         [{"text": "📊 Статистика (TXT)", "callback_data": "report_stats_txt"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1914,14 +1887,14 @@ def get_admins_menu():
         [{"text": "📋 Список адмінів", "callback_data": "admin_list"}],
         [{"text": "➕ Додати адміна", "callback_data": "admin_add"}],
         [{"text": "🗑 Видалити адміна", "callback_data": "admin_remove"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
 def get_settings_menu():
     keyboard = [
         [{"text": "🔑 Змінити пароль", "callback_data": "admin_settings_password"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_main"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1933,7 +1906,7 @@ def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
         [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
         [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
         [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_orders"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_orders"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1941,8 +1914,8 @@ def get_message_actions_menu(message_id: int, user_id: int):
     keyboard = [
         [{"text": "📝 Відповісти", "callback_data": f"reply_user_{user_id}"}],
         [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
-        [{"text": "📋 Всі повідомлення", "callback_data": "back_admin_messages"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_messages"}]
+        [{"text": "📋 Всі повідомлення", "callback_data": "back_to_messages"}],
+        [{"text": "🔙 Назад", "callback_data": "back_to_messages"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1952,7 +1925,7 @@ def get_customer_actions_menu(user_id: int):
         [{"text": "💬 Повідомлення", "callback_data": f"customer_messages_{user_id}"}],
         [{"text": "📢 Надіслати повідомлення", "callback_data": f"customer_message_{user_id}"}],
         [{"text": "👑 Зробити адміном", "callback_data": f"customer_make_admin_{user_id}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_customers"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_customers"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1964,7 +1937,7 @@ def get_order_status_keyboard(order_id: int, order_type: str = 'regular'):
         [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
         [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
         [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_admin_orders"}]
+        [{"text": "🔙 Назад", "callback_data": "back_to_orders"}]
     ]
     return create_inline_keyboard(keyboard)
 
@@ -1973,15 +1946,15 @@ def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
     if has_more:
         buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
     buttons.append([{"text": "🔍 Детально", "callback_data": "admin_order_details"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_admin_orders"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_orders"}])
     return create_inline_keyboard(buttons)
 
-def get_messages_pagination_keyboard(user_id: int, has_more: bool = True, messages_type: str = "recent"):
+def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
     buttons = []
     if has_more:
-        buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": f"admin_messages_more_{messages_type}"}])
-    buttons.append([{"text": "🔍 Детально", "callback_data": f"admin_messages_details_{messages_type}"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_admin_messages"}])
+        buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": "admin_messages_more"}])
+    buttons.append([{"text": "🔍 Детально", "callback_data": "admin_messages_details"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_messages"}])
     return create_inline_keyboard(buttons)
 
 def get_reply_keyboard(order_id: int = None, user_id: int = None):
@@ -1990,11 +1963,11 @@ def get_reply_keyboard(order_id: int = None, user_id: int = None):
         buttons.append([{"text": "📦 Переглянути замовлення", "callback_data": f"order_view_{order_id}"}])
     if user_id:
         buttons.append([{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_admin_main"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_main"}])
     return create_inline_keyboard(buttons)
 
 def get_messages_back_keyboard() -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": "back_admin_messages"}]]
+    buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_messages"}]]
     return create_inline_keyboard(buttons)
 
 def is_authenticated(user_id: int) -> bool:
@@ -2047,36 +2020,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Обробка кнопок "Назад"
-        if data.startswith("back_"):
-            back_target = data[5:]
+        if data.startswith("back_to_"):
+            target = data[8:]  # Видаляємо "back_to_"
             
-            if back_target == "admin_main":
+            if target == "main":
                 await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
                 return
             
-            elif back_target == "admin_products":
-                await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
-                return
-            
-            elif back_target == "admin_orders":
+            elif target == "orders":
                 await query.edit_message_text("📋 Керування замовленнями\n\nОберіть тип замовлень:", reply_markup=get_orders_menu())
                 return
             
-            elif back_target == "admin_customers":
+            elif target == "customers":
                 await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
                 return
             
-            elif back_target == "admin_messages":
+            elif target == "messages":
                 await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
                 return
             
-            elif back_target == "admin_broadcast":
+            elif target == "broadcast_menu":
                 await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
                 return
             
-            elif back_target.startswith("broadcast_"):
-                segment = back_target.replace("broadcast_", "")
-                await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_broadcast_input_back_keyboard(segment))
+            elif target == "products":
+                await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
                 return
             
             else:
@@ -2092,7 +2060,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "admin_reset_orders":
             keyboard = InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Так, видалити всі замовлення", callback_data="confirm_reset_orders")],
-                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_admin_main")]
+                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_main")]
             ])
             await query.edit_message_text("⚠️ <b>Ви дійсно хочете видалити ВСІ замовлення та повідомлення?</b>\n\nКлієнти та товари залишаться, але всі замовлення та повідомлення будуть безповоротно видалені.", reply_markup=keyboard, parse_mode='HTML')
             return
@@ -2118,13 +2086,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = "📦 Список товарів\n\n"
                 for p in products:
                     text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн\nКатегорія: {p['category']}\n{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_products")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         elif data == "admin_product_add":
             admin_sessions[user_id] = {"state": "authenticated", "action": "add_product_name"}
-            await query.edit_message_text("➕ Додавання нового товару\n\nВведіть назву товару:", reply_markup=get_back_keyboard("admin_products"))
+            await query.edit_message_text("➕ Додавання нового товару\n\nВведіть назву товару:", reply_markup=get_back_keyboard("products"))
             return
         
         elif data == "admin_product_edit":
@@ -2135,7 +2103,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = []
             for p in products[:20]:
                 keyboard.append([InlineKeyboardButton(f"{p['id']}. {p['name'][:30]}", callback_data=f"edit_product_{p['id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_products")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
             await query.edit_message_text("✏️ Редагування товару\n\nОберіть товар для редагування:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2152,7 +2120,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                 [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
                 [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="back_admin_products")]
+                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
             ]
             await query.edit_message_text(
                 f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
@@ -2166,7 +2134,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = int(parts[3])
             admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
             field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію", "image": "фото"}
-            await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("admin_products"))
+            await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
             return
         
         elif data == "admin_product_delete":
@@ -2177,7 +2145,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = []
             for p in products[:20]:
                 keyboard.append([InlineKeyboardButton(f"❌ {p['id']}. {p['name'][:30]}", callback_data=f"delete_product_{p['id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_products")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
             await query.edit_message_text("🗑 Видалення товару\n\nОберіть товар для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2185,7 +2153,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product_id = int(data.split("_")[2])
             keyboard = [
                 [InlineKeyboardButton("✅ Так, видалити", callback_data=f"confirm_delete_{product_id}")],
-                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_admin_products")]
+                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_products")]
             ]
             await query.edit_message_text(f"🗑 Підтвердження видалення\n\nВи дійсно хочете видалити товар #{product_id}?", reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -2196,7 +2164,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = "✅ Товар успішно видалено!"
             else:
                 text = "❌ Помилка при видаленні товару"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_products")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2227,7 +2195,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             more_orders = get_more_orders(user_id, count=5)
             if not more_orders:
                 text = "📋 Більше замовлень не знайдено."
-                await query.edit_message_text(text, reply_markup=get_back_keyboard("admin_orders"), parse_mode='HTML')
+                await query.edit_message_text(text, reply_markup=get_back_keyboard("orders"), parse_mode='HTML')
                 return
             
             text = "📋 <b>ЩЕ ЗАМОВЛЕННЯ</b>\n\n"
@@ -2244,7 +2212,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             orders = get_all_orders(include_quick=True, limit=10)
             if not orders:
                 text = "📋 Всі замовлення\n\nЗамовлень не знайдено."
-                keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")]]
+                keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")]]
                 await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
                 return
             
@@ -2257,7 +2225,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             keyboard = [
                 [InlineKeyboardButton("🔍 Детально", callback_data="admin_order_details")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")]
+                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")]
             ]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             return
@@ -2278,7 +2246,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"{type_prefix} №{display_id} - {customer_name} - {total:.0f} грн", 
                     callback_data=f"order_view_{display_id}_{order_type}"
                 )])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")])
             await query.edit_message_text("📋 Детальний перегляд замовлень\n\nОберіть замовлення:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2294,7 +2262,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"Сума: {order.get('total', 0):.2f} грн\n"
                     text += f"Телефон: {order['phone']}\n"
                     text += f"{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2312,13 +2280,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if order.get('message'):
                         text += f"💬 {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
                     text += f"{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         elif data == "admin_order_by_phone":
             admin_sessions[user_id] = {"state": "authenticated", "action": "search_orders_by_phone"}
-            await query.edit_message_text("📞 Пошук замовлень за телефоном\n\nВведіть номер телефону клієнта:", reply_markup=get_back_keyboard("admin_orders"))
+            await query.edit_message_text("📞 Пошук замовлень за телефоном\n\nВведіть номер телефону клієнта:", reply_markup=get_back_keyboard("orders"))
             return
         
         elif data.startswith("order_view_"):
@@ -2488,69 +2456,74 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_messages = get_all_messages(limit=5, offset=0)
             has_more = len(all_messages) >= 5
             
-            await query.edit_message_text(
-                "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n" + 
-                "\n".join([f"💬 #{msg['id']} - {msg['user_name']} - {msg['created_at'][:16]}\n📝 {msg['text'][:50]}..." for msg in recent_messages]),
-                reply_markup=get_messages_pagination_keyboard(user_id, has_more, "recent"),
-                parse_mode='HTML'
-            )
+            text = "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n"
+            for msg in recent_messages:
+                text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                text += f"📅 Час: {msg['created_at'][:16]}\n"
+                text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                text += f"{'─'*40}\n"
+            
+            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
             return
         
-        elif data.startswith("admin_messages_more_"):
-            msg_type = data.split("_")[3] if len(data.split("_")) > 3 else "recent"
+        elif data == "admin_messages_more":
             more_messages = get_more_messages(user_id, count=5)
             if not more_messages:
                 text = "💬 Більше повідомлень не знайдено."
-                await query.edit_message_text(text, reply_markup=get_back_keyboard("admin_messages"), parse_mode='HTML')
+                await query.edit_message_text(text, reply_markup=get_back_keyboard("messages"), parse_mode='HTML')
                 return
+            
+            text = "💬 <b>ЩЕ ПОВІДОМЛЕННЯ</b>\n\n"
+            for msg in more_messages:
+                text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                text += f"📅 Час: {msg['created_at'][:16]}\n"
+                text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                text += f"{'─'*40}\n"
             
             next_messages = get_all_messages(limit=1, offset=messages_offset.get(user_id, 0))
             has_more = len(next_messages) > 0
             
-            await query.edit_message_text(
-                "💬 <b>ЩЕ ПОВІДОМЛЕННЯ</b>\n\n" + 
-                "\n".join([f"💬 #{msg['id']} - {msg['user_name']} - {msg['created_at'][:16]}\n📝 {msg['text'][:50]}..." for msg in more_messages]),
-                reply_markup=get_messages_pagination_keyboard(user_id, has_more, msg_type),
-                parse_mode='HTML'
-            )
+            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
             return
         
         elif data == "admin_messages_all":
             messages = get_all_messages(limit=20)
             if not messages:
                 text = "💬 Повідомлень поки немає"
-                await query.edit_message_text(text, reply_markup=get_messages_back_keyboard())
-                return
+            else:
+                text = "💬 <b>ВСІ ПОВІДОМЛЕННЯ</b>\n\n"
+                for msg in messages:
+                    text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+                    text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+                    text += f"📅 Час: {msg['created_at'][:16]}\n"
+                    text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+                    text += f"{'─'*40}\n"
             
             all_messages = get_all_messages(limit=5, offset=0)
             has_more = len(all_messages) >= 5
             
-            await query.edit_message_text(
-                "💬 <b>ВСІ ПОВІДОМЛЕННЯ</b>\n\n" + 
-                "\n".join([f"💬 #{msg['id']} - {msg['user_name']} - {msg['created_at'][:16]}\n📝 {msg['text'][:50]}..." for msg in messages]),
-                reply_markup=get_messages_pagination_keyboard(user_id, has_more, "all"),
-                parse_mode='HTML'
-            )
+            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
             return
         
-        elif data.startswith("admin_messages_details_"):
-            msg_type = data.split("_")[3] if len(data.split("_")) > 3 else "recent"
-            
-            if msg_type == "recent":
-                messages = get_recent_messages(hours=24, min_count=20)
-            else:
-                messages = get_all_messages(limit=50)
-            
+        elif data == "admin_messages_details":
+            messages = get_all_messages(limit=50)
             if not messages:
                 await query.edit_message_text("❌ Повідомлень не знайдено", reply_markup=get_messages_back_keyboard())
                 return
-            
-            if msg_type == "recent":
-                keyboard = get_messages_recent_details_keyboard(messages)
-            else:
-                keyboard = get_messages_all_details_keyboard(messages)
-            
-            await query.edit_message_text("📋 Детальний перегляд повідомлень\n\nОберіть повідомлення:", reply_markup=keyboard)
+            keyboard = []
+            for msg in messages[:20]:
+                user_name = msg['user_name']
+                msg_id = msg['id']
+                created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
+                text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
+                keyboard.append([InlineKeyboardButton(
+                    f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
+                    callback_data=f"message_view_{msg_id}"
+                )])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
+            await query.edit_message_text("📋 Детальний перегляд повідомлень\n\nОберіть повідомлення:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         elif data.startswith("message_view_"):
@@ -2579,7 +2552,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
             await query.edit_message_text(
                 f"📝 Відповідь користувачу {user_data['first_name'] if user_data else '#'}{user_id_to_reply}\n\nВведіть текст повідомлення:",
-                reply_markup=get_back_keyboard("admin_messages")
+                reply_markup=get_back_keyboard("messages")
             )
             return
         
@@ -2621,7 +2594,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"{'─'*30}\n"
                 if len(users) > 20:
                     text += f"... та ще {len(users) - 20} клієнтів"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2639,7 +2612,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
             if count == 0:
                 text = "👑 VIP клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2657,7 +2630,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
             if count == 0:
                 text = "⭐ Постійних клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2675,7 +2648,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
             if count == 0:
                 text = "🆕 Нових клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2697,7 +2670,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\nОстаннє замовлення: {last_order_date}\n{'─'*30}\n"
             if count == 0:
                 text = "💤 Неактивних клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2718,7 +2691,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "admin_customer_search":
             admin_sessions[user_id] = {"state": "authenticated", "action": "search_customer_by_phone"}
-            await query.edit_message_text("🔍 Пошук клієнта за телефоном\n\nВведіть номер телефону:", reply_markup=get_back_keyboard("admin_customers"))
+            await query.edit_message_text("🔍 Пошук клієнта за телефоном\n\nВведіть номер телефону:", reply_markup=get_back_keyboard("customers"))
             return
         
         elif data.startswith("customer_view_"):
@@ -2948,13 +2921,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for admin in admins:
                     added_at = admin.get('added_at', '')[:16]
                     text += f"ID: {admin['user_id']}\nUsername: @{admin['username']}\nДодано: {added_at}\n{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_main")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         elif data == "admin_add":
             admin_sessions[user_id] = {"state": "authenticated", "action": "add_admin"}
-            await query.edit_message_text("➕ Додавання адміністратора\n\nВведіть Telegram ID користувача:", reply_markup=get_back_keyboard("admin_main"))
+            await query.edit_message_text("➕ Додавання адміністратора\n\nВведіть Telegram ID користувача:", reply_markup=get_back_keyboard("main"))
             return
         
         elif data == "admin_remove":
@@ -2966,7 +2939,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for admin in admins:
                 if admin['user_id'] != user_id:
                     keyboard.append([InlineKeyboardButton(f"❌ {admin['user_id']} - @{admin['username']}", callback_data=f"remove_admin_{admin['user_id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_main")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
             await query.edit_message_text("🗑 Видалення адміністратора\n\nОберіть адміна для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2978,7 +2951,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = "✅ Адміна успішно видалено!"
             else:
                 text = "❌ Помилка при видаленні адміна"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_main")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -3004,7 +2977,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"   🆕 Нові: {segments.get('new', 0)}\n"
             text += f"   📊 Активні: {segments.get('active', 0)}\n"
             text += f"   💤 Неактивні: {segments.get('inactive', 0)}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_admin_main")]]
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -3014,7 +2987,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data == "admin_settings_password":
             admin_sessions[user_id] = {"state": "authenticated", "action": "change_password"}
-            await query.edit_message_text("🔑 Зміна пароля\n\nВведіть новий пароль:", reply_markup=get_back_keyboard("admin_main"))
+            await query.edit_message_text("🔑 Зміна пароля\n\nВведіть новий пароль:", reply_markup=get_back_keyboard("main"))
             return
         
         else:
@@ -3053,7 +3026,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
             admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_price":
@@ -3061,33 +3034,33 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 price = float(text.replace(",", "."))
                 admin_sessions[user_id]["product_price"] = price
                 admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("products"))
             except ValueError:
-                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_category":
             admin_sessions[user_id]["product_category"] = text
             admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_description":
             admin_sessions[user_id]["product_description"] = text
             admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_unit":
             admin_sessions[user_id]["product_unit"] = text
             admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_image":
             admin_sessions[user_id]["product_image"] = text
             admin_sessions[user_id]["action"] = "add_product_image_upload"
-            await update.message.reply_text("📷 Надішліть фото товару (або введіть 'пропустити'):", reply_markup=get_back_keyboard("admin_products"))
+            await update.message.reply_text("📷 Надішліть фото товару (або введіть 'пропустити'):", reply_markup=get_back_keyboard("products"))
             return
         
         elif action == "add_product_image_upload":
@@ -3097,12 +3070,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 admin_sessions[user_id]["product_image_path"] = image_path
                 admin_sessions[user_id]["product_image_url"] = file_id
                 admin_sessions[user_id]["action"] = "add_product_details"
-                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             elif text.lower() == "пропустити" or text == "-":
                 admin_sessions[user_id]["product_image_path"] = None
                 admin_sessions[user_id]["product_image_url"] = None
                 admin_sessions[user_id]["action"] = "add_product_details"
-                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             else:
                 await update.message.reply_text("❌ Будь ласка, надішліть фото або введіть 'пропустити'")
             return
@@ -3140,7 +3113,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if field == "image":
                 admin_sessions[user_id]["action"] = "edit_product_image_upload"
                 admin_sessions[user_id]["product_id"] = product_id
-                await update.message.reply_text("📷 Надішліть нове фото товару:", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("📷 Надішліть нове фото товару:", reply_markup=get_back_keyboard("products"))
                 return
             
             update_data = {}
@@ -3150,7 +3123,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     update_data["price"] = float(text.replace(",", "."))
                 except ValueError:
-                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard("admin_products"))
+                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard("products"))
                     return
             elif field == "desc":
                 update_data["description"] = text
@@ -3195,7 +3168,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await update.message.reply_text("❌ Помилка при завантаженні фото", reply_markup=get_products_menu())
             else:
-                await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("admin_products"))
+                await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
                 return
             
             admin_sessions[user_id].pop("action", None)
@@ -3221,7 +3194,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     order_id = order.get('order_id', order.get('id', 0))
                     order_type = order.get('order_type', 'regular')
                     keyboard.append([InlineKeyboardButton(f"📦 №{order_id}", callback_data=f"order_view_{order_id}_{order_type}")])
-                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_orders")])
+                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_orders")])
                 await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(keyboard))
             admin_sessions[user_id].pop("action", None)
             return
@@ -3249,7 +3222,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     response += f"💰 Загальна сума: {total:.2f} грн"
                 
                 keyboard = [[InlineKeyboardButton("👤 Переглянути профіль", callback_data=f"customer_view_{user_data['user_id']}")]]
-                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_admin_customers")])
+                keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")])
                 
                 await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(keyboard))
             admin_sessions[user_id].pop("action", None)
