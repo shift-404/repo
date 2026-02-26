@@ -2216,7 +2216,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
             return
         
-                elif action == "edit_product_image_url":
+        elif action == "edit_product_image_url":
             product_id = session.get("product_id")
             logger.info(f"📝 Отримано повідомлення для edit_product_image_url, product_id з сесії: {product_id}, текст: {text}")
             
@@ -3942,6 +3942,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
