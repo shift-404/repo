@@ -82,6 +82,12 @@ if not DATABASE_URL:
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
 
+# Додайте на початку файлу адмін-бота:
+import os
+IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
+os.makedirs(IMAGE_DIR, exist_ok=True)
+print(f"📁 Папка для зображень: {IMAGE_DIR}")
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -3916,4 +3922,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
