@@ -2193,6 +2193,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             field = parts[2]
+            # Важливо: в edit_field_image_1 - остання частина це ID
             try:
                 product_id = int(parts[3])
             except (IndexError, ValueError):
@@ -2216,13 +2217,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data.startswith("edit_product_image_url_"):
+            # Формат: edit_product_image_url_1
+            # Розбиваємо рядок і беремо останній елемент як ID
             parts = data.split("_")
-            if len(parts) < 5:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
+            # Останній елемент має бути числом
             try:
-                product_id = int(parts[4])
+                product_id = int(parts[-1])
             except (IndexError, ValueError):
                 logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
@@ -2240,13 +2240,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data.startswith("edit_product_image_file_"):
+            # Формат: edit_product_image_file_1
+            # Розбиваємо рядок і беремо останній елемент як ID
             parts = data.split("_")
-            if len(parts) < 5:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
+            # Останній елемент має бути числом
             try:
-                product_id = int(parts[4])
+                product_id = int(parts[-1])
             except (IndexError, ValueError):
                 logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
@@ -2264,13 +2263,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data.startswith("delete_product_image_"):
+            # Формат: delete_product_image_1
+            # Розбиваємо рядок і беремо останній елемент як ID
             parts = data.split("_")
-            if len(parts) < 4:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
+            # Останній елемент має бути числом
             try:
-                product_id = int(parts[3])
+                product_id = int(parts[-1])
             except (IndexError, ValueError):
                 logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
@@ -3918,3 +3916,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
