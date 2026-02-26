@@ -1061,6 +1061,8 @@ def get_company_text() -> str:
     text += "• Терміни доставки: 1-4 дні в залежності від регіону\n"
     return text
 
+# Знайдіть функцію get_product_text і замініть її на цю:
+
 def get_product_text(product_id: int) -> str:
     refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -1089,6 +1091,61 @@ def get_product_text(product_id: int) -> str:
 Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
     """
     return text
+
+# Знайдіть обробник product_ в button_handler і замініть на:
+
+elif data.startswith("product_"):
+    product_id = int(data.split("_")[1])
+    product = get_product_by_id(product_id)
+    product_text = get_product_text(product_id)
+    
+    if product and product.get('image_path'):
+        # Якщо є локальний шлях до файлу, відправляємо файл
+        try:
+            with open(product['image_path'], 'rb') as photo:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=product_text,
+                    parse_mode='HTML',
+                    reply_markup=get_product_detail_menu(product_id)
+                )
+            await query.message.delete()
+        except Exception as e:
+            logger.error(f"Помилка відправки фото з файлу: {e}")
+            # Якщо не вдалося відправити файл, пробуємо використати file_id або текст
+            if product.get('image_file_id'):
+                try:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=product['image_file_id'],
+                        caption=product_text,
+                        parse_mode='HTML',
+                        reply_markup=get_product_detail_menu(product_id)
+                    )
+                    await query.message.delete()
+                except Exception as e2:
+                    logger.error(f"Помилка відправки фото з file_id: {e2}")
+                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            else:
+                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+    elif product and product.get('image_file_id'):
+        try:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=product['image_file_id'],
+                caption=product_text,
+                parse_mode='HTML',
+                reply_markup=get_product_detail_menu(product_id)
+            )
+            await query.message.delete()
+        except Exception as e:
+            logger.error(f"Помилка відправки фото з file_id: {e}")
+            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+    else:
+        await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+    
+    Database.save_user_session(user_id, last_section=f"product_{product_id}")
 
 def get_quick_order_text(product_id: int) -> str:
     refresh_products()
@@ -1988,3 +2045,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
