@@ -12,6 +12,7 @@ import asyncio
 import traceback
 import time
 import requests
+
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, InputMediaPhoto
 from telegram.ext import (
     Application,
@@ -285,53 +286,34 @@ async def download_image_from_url(url: str) -> tuple:
     Завантажує зображення за URL і повертає (file_path, file_id)
     """
     try:
-        # Завантажуємо зображення за URL
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         
-        # Перевіряємо, що це дійсно зображення
         content_type = response.headers.get('content-type', '')
         if not content_type.startswith('image/'):
+            logger.error(f"URL не містить зображення: {content_type}")
             return None, None
         
-        # Генеруємо унікальне ім'я файлу
         filename = f"url_image_{int(time.time())}.jpg"
         file_path = os.path.join(IMAGE_DIR, filename)
         
-        # Зберігаємо файл
         with open(file_path, 'wb') as f:
             f.write(response.content)
         
+        logger.info(f"Зображення за URL успішно завантажено: {file_path}")
         return file_path, None
+    except requests.exceptions.Timeout:
+        logger.error(f"Таймаут при завантаженні URL: {url}")
+        return None, None
+    except requests.exceptions.ConnectionError:
+        logger.error(f"Помилка з'єднання при завантаженні URL: {url}")
+        return None, None
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"HTTP помилка при завантаженні URL {url}: {e}")
+        return None, None
     except Exception as e:
         logger.error(f"Помилка завантаження зображення за URL {url}: {e}")
         return None, None
-
-async def get_file_id_from_image_path(image_path: str, bot: Bot) -> str:
-    """
-    Відправляє зображення в Telegram і повертає file_id
-    """
-    try:
-        with open(image_path, 'rb') as f:
-            # Створюємо тимчасовий об'єкт Update для отримання file_id
-            # Але простіше просто відправити фото в чат і отримати file_id
-            # Для цього нам потрібен chat_id. Використаємо спеціальний чат для цього
-            # Але оскільки ми не знаємо chat_id, будемо використовувати інший підхід
-            
-            # Альтернатива: використовуємо метод send_photo в будь-який чат, де є бот
-            # Наприклад, в чат адміна, але це незручно
-            
-            # Найкращий спосіб: використовуємо upload_sticker_file або upload_photo
-            # Але це не прямо в Telegram Bot API
-            
-            # Тому ми зробимо простіше: будемо зберігати тільки шлях до файлу,
-            # а в основному боті будемо відправляти файл за шляхом
-            # Це працює, оскільки Railway має доступ до файлової системи
-            
-            return None
-    except Exception as e:
-        logger.error(f"Помилка отримання file_id: {e}")
-        return None
 
 async def reset_all_orders():
     conn = get_db_connection()
@@ -2020,7 +2002,7 @@ def get_product_image_keyboard(product_id: int, has_image: bool = False) -> Inli
     buttons.append([{"text": "📷 Завантажити файл", "callback_data": f"edit_product_image_file_{product_id}"}])
     if has_image:
         buttons.append([{"text": "🗑 Видалити фото", "callback_data": f"delete_product_image_{product_id}"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": f"edit_product_{product_id}"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": f"back_to_edit_product_{product_id}"}])
     return create_inline_keyboard(buttons)
 
 def is_authenticated(user_id: int) -> bool:
@@ -2213,7 +2195,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             field = parts[2]
             try:
                 product_id = int(parts[3])
-            except ValueError:
+            except (IndexError, ValueError):
+                logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
             
@@ -2240,7 +2223,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 product_id = int(parts[4])
-            except ValueError:
+            except (IndexError, ValueError):
+                logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
             
@@ -2263,7 +2247,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 product_id = int(parts[4])
-            except ValueError:
+            except (IndexError, ValueError):
+                logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
             
@@ -2286,7 +2271,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 product_id = int(parts[3])
-            except ValueError:
+            except (IndexError, ValueError):
+                logger.error(f"Помилка парсингу product_id з {data}")
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
             
@@ -3932,5 +3918,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
