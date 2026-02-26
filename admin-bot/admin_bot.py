@@ -2491,615 +2491,663 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        elif data.startswith("order_shipped_"):
-            parts = data.split("_")
-            order_id = int(parts[2])
-            order_type = parts[3] if len(parts) > 3 else 'regular'
-            
-            if update_order_status(order_id, "відправлено", order_type):
-                text = f"🚚 Замовлення №{order_id} відправлено!"
-                
-                order = get_order_by_id(order_id, order_type)
-                if order and order['user_id']:
-                    await notify_customer_about_status(order['user_id'], order_id, "відправлено")
-            else:
-                text = f"❌ Помилка при оновленні статусу"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+elif data.startswith("order_shipped_"):
+    parts = data.split("_")
+    order_id = int(parts[2])
+    order_type = parts[3] if len(parts) > 3 else 'regular'
+    
+    if update_order_status(order_id, "відправлено", order_type):
+        text = f"🚚 Замовлення №{order_id} відправлено!"
         
-        elif data.startswith("order_arrived_"):
-            parts = data.split("_")
-            order_id = int(parts[2])
-            order_type = parts[3] if len(parts) > 3 else 'regular'
-            
-            if update_order_status(order_id, "прибуло", order_type):
-                text = f"📍 Замовлення №{order_id} прибуло у відділення!"
-                
-                order = get_order_by_id(order_id, order_type)
-                if order and order['user_id']:
-                    await notify_customer_about_status(order['user_id'], order_id, "прибуло")
-            else:
-                text = f"❌ Помилка при оновленні статусу"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+        order = get_order_by_id(order_id, order_type)
+        if order and order['user_id']:
+            await notify_customer_about_status(order['user_id'], order_id, "відправлено")
+    else:
+        text = f"❌ Помилка при оновленні статусу"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data.startswith("order_arrived_"):
+    parts = data.split("_")
+    order_id = int(parts[2])
+    order_type = parts[3] if len(parts) > 3 else 'regular'
+    
+    if update_order_status(order_id, "прибуло", order_type):
+        text = f"📍 Замовлення №{order_id} прибуло у відділення!"
         
-        elif data.startswith("order_cancel_"):
-            parts = data.split("_")
-            order_id = int(parts[2])
-            order_type = parts[3] if len(parts) > 3 else 'regular'
-            
-            if update_order_status(order_id, "скасовано", order_type):
-                text = f"❌ Замовлення №{order_id} скасовано!"
-                
-                order = get_order_by_id(order_id, order_type)
-                if order and order['user_id']:
-                    await notify_customer_about_status(order['user_id'], order_id, "скасовано")
-            else:
-                text = f"❌ Помилка при скасуванні замовлення"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+        order = get_order_by_id(order_id, order_type)
+        if order and order['user_id']:
+            await notify_customer_about_status(order['user_id'], order_id, "прибуло")
+    else:
+        text = f"❌ Помилка при оновленні статусу"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data.startswith("order_cancel_"):
+    parts = data.split("_")
+    order_id = int(parts[2])
+    order_type = parts[3] if len(parts) > 3 else 'regular'
+    
+    if update_order_status(order_id, "скасовано", order_type):
+        text = f"❌ Замовлення №{order_id} скасовано!"
         
-        elif data == "admin_messages":
-            await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
-            return
-        
-        elif data == "admin_messages_recent":
-            recent_messages = get_recent_messages(hours=24, min_count=5)
-            if not recent_messages:
-                text = "💬 Повідомлень за останню добу немає.\n\nПоказую останні повідомлення:"
-                recent_messages = get_all_messages(limit=5)
-            
-            if not recent_messages:
-                text = "💬 Повідомлень не знайдено."
-                await query.edit_message_text(text, reply_markup=get_back_keyboard("messages"))
-                return
-            
-            all_messages = get_all_messages(limit=5, offset=0)
-            has_more = len(all_messages) >= 5
-            
-            text = "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n"
-            for msg in recent_messages:
-                text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
-                text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
-                text += f"📅 Час: {msg['created_at'][:16]}\n"
-                text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-                text += f"{'─'*40}\n"
-            
-            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
-            return
-        
-        elif data == "admin_messages_more":
-            more_messages = get_more_messages(user_id, count=5)
-            if not more_messages:
-                text = "💬 Більше повідомлень не знайдено."
-                await query.edit_message_text(text, reply_markup=get_back_keyboard("messages"), parse_mode='HTML')
-                return
-            
-            text = "💬 <b>ЩЕ ПОВІДОМЛЕННЯ</b>\n\n"
-            for msg in more_messages:
-                text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
-                text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
-                text += f"📅 Час: {msg['created_at'][:16]}\n"
-                text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-                text += f"{'─'*40}\n"
-            
-            next_messages = get_all_messages(limit=1, offset=messages_offset.get(user_id, 0))
-            has_more = len(next_messages) > 0
-            
-            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
-            return
-        
-        elif data == "admin_messages_all":
-            messages = get_all_messages(limit=20)
-            if not messages:
-                text = "💬 Повідомлень поки немає"
-            else:
-                text = "💬 <b>ВСІ ПОВІДОМЛЕННЯ</b>\n\n"
-                for msg in messages:
-                    text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
-                    text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
-                    text += f"📅 Час: {msg['created_at'][:16]}\n"
-                    text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-                    text += f"{'─'*40}\n"
-            
-            all_messages = get_all_messages(limit=5, offset=0)
-            has_more = len(all_messages) >= 5
-            
-            await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
-            return
-        
-        elif data == "admin_messages_details":
-            messages = get_all_messages(limit=50)
-            if not messages:
-                await query.edit_message_text("❌ Повідомлень не знайдено", reply_markup=get_back_keyboard("messages"))
-                return
-            keyboard = []
-            for msg in messages[:20]:
-                user_name = msg['user_name']
-                msg_id = msg['id']
-                created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
-                text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
-                keyboard.append([InlineKeyboardButton(
-                    f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
-                    callback_data=f"message_view_{msg_id}"
-                )])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
-            await query.edit_message_text("📋 Детальний перегляд повідомлень\n\nОберіть повідомлення:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data.startswith("message_view_"):
-            message_id = int(data.split("_")[2])
-            msg = get_message_by_id(message_id)
-            if not msg:
-                await query.edit_message_text("❌ Повідомлення не знайдено", reply_markup=get_back_keyboard("messages"))
-                return
-            
-            text = format_message_text(msg)
-            await query.edit_message_text(
-                text,
-                reply_markup=get_message_actions_menu(message_id, msg['user_id']),
-                parse_mode='HTML'
-            )
-            return
-        
-        elif data.startswith("reply_user_"):
-            user_id_to_reply = int(data.split("_")[2])
-            user_data = get_user_by_id(user_id_to_reply)
-            
-            admin_sessions[user_id] = {
-                "state": "authenticated",
-                "action": "reply_to_user",
-                "customer_id": user_id_to_reply
-            }
-            await query.edit_message_text(
-                f"📝 Відповідь користувачу {user_data['first_name'] if user_data else '#'}{user_id_to_reply}\n\nВведіть текст повідомлення:",
-                reply_markup=get_back_keyboard("messages")
-            )
-            return
-        
-        elif data == "messages_all_file":
-            messages = get_all_messages(limit=1000)
-            if not messages:
-                await query.edit_message_text("💬 Повідомлень поки немає", reply_markup=get_back_keyboard("messages"))
-                return
-            file_data = generate_messages_report(messages, "txt")
-            await query.message.reply_document(
-                document=file_data,
-                filename=f"all_messages_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="💬 Всі повідомлення користувачів"
-            )
-            await query.edit_message_text("✅ Файл з повідомленнями згенеровано!", reply_markup=get_back_keyboard("messages"))
-            return
-        
-        elif data == "admin_customers":
-            await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
-            return
-        
-        elif data == "admin_customers_all":
-            users = get_all_users()
-            if not users:
-                text = "👥 Клієнти\n\nКлієнтів не знайдено."
-            else:
-                text = f"👥 ВСІ КЛІЄНТИ\n\nВсього: {len(users)}\n\n"
-                for user in users[:20]:
-                    orders = get_user_orders(user['user_id'])
-                    quick_orders = get_user_quick_orders(user['user_id'])
-                    all_orders = orders + quick_orders
-                    segment = get_customer_segment(user, all_orders)
-                    created_at = user.get('created_at', '')
-                    text += f"ID: {user['user_id']}\n"
-                    text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
-                    text += f"Username: @{user['username']}\n"
-                    text += f"📊 {segment}\n"
-                    text += f"📦 Замовлень: {len(all_orders)}\n"
-                    text += f"{'─'*30}\n"
-                if len(users) > 20:
-                    text += f"... та ще {len(users) - 20} клієнтів"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_customers_vip":
-            users = get_all_users()
-            text = "👑 VIP КЛІЄНТИ\n\n"
-            count = 0
-            for user in users:
-                orders = get_user_orders(user['user_id'])
-                quick_orders = get_user_quick_orders(user['user_id'])
-                all_orders = orders + quick_orders
-                segment = get_customer_segment(user, all_orders)
-                if "VIP" in segment:
-                    count += 1
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
-            if count == 0:
-                text = "👑 VIP клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_customers_regular":
-            users = get_all_users()
-            text = "⭐ ПОСТІЙНІ КЛІЄНТИ\n\n"
-            count = 0
-            for user in users:
-                orders = get_user_orders(user['user_id'])
-                quick_orders = get_user_quick_orders(user['user_id'])
-                all_orders = orders + quick_orders
-                segment = get_customer_segment(user, all_orders)
-                if "Постійний" in segment:
-                    count += 1
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
-            if count == 0:
-                text = "⭐ Постійних клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_customers_new":
-            users = get_all_users()
-            text = "🆕 НОВІ КЛІЄНТИ\n\n"
-            count = 0
-            for user in users:
-                orders = get_user_orders(user['user_id'])
-                quick_orders = get_user_quick_orders(user['user_id'])
-                all_orders = orders + quick_orders
-                segment = get_customer_segment(user, all_orders)
-                if "Новий" in segment:
-                    count += 1
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
-            if count == 0:
-                text = "🆕 Нових клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_customers_inactive":
-            users = get_all_users()
-            text = "💤 НЕАКТИВНІ КЛІЄНТИ\n\n"
-            count = 0
-            for user in users:
-                orders = get_user_orders(user['user_id'])
-                quick_orders = get_user_quick_orders(user['user_id'])
-                all_orders = orders + quick_orders
-                segment = get_customer_segment(user, all_orders)
-                if "Неактивний" in segment:
-                    count += 1
-                    last_order_date = "Немає"
-                    if all_orders:
-                        last_order = all_orders[0].get('created_at', '')
-                        last_order_date = last_order[:16]
-                    text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\nОстаннє замовлення: {last_order_date}\n{'─'*30}\n"
-            if count == 0:
-                text = "💤 Неактивних клієнтів не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "export_customers":
-            users = get_all_users()
-            if not users:
-                await query.edit_message_text("❌ Немає клієнтів для експорту", reply_markup=get_customers_menu())
-                return
-            
-            file_data = generate_users_report(users)
-            await query.message.reply_document(
-                document=file_data,
-                filename=f"customers_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="👥 Повний звіт по клієнтах"
-            )
-            await query.edit_message_text("✅ Файл з клієнтами згенеровано!", reply_markup=get_customers_menu())
-            return
-        
-        elif data == "admin_customer_search":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "search_customer_by_phone"}
-            await query.edit_message_text("🔍 Пошук клієнта за телефоном\n\nВведіть номер телефону:", reply_markup=get_back_keyboard("customers"))
-            return
-        
-        elif data.startswith("customer_view_"):
-            customer_id = int(data.split("_")[2])
-            user = get_user_by_id(customer_id)
-            if not user:
-                await query.edit_message_text("❌ Клієнта не знайдено")
-                return
-            orders = get_user_orders(customer_id)
-            quick_orders = get_user_quick_orders(customer_id)
-            messages = get_user_messages(customer_id)
+        order = get_order_by_id(order_id, order_type)
+        if order and order['user_id']:
+            await notify_customer_about_status(order['user_id'], order_id, "скасовано")
+    else:
+        text = f"❌ Помилка при скасуванні замовлення"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"order_view_{order_id}_{order_type}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_messages":
+    await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
+    return
+
+elif data == "admin_messages_recent":
+    recent_messages = get_recent_messages(hours=24, min_count=5)
+    if not recent_messages:
+        text = "💬 Повідомлень за останню добу немає.\n\nПоказую останні повідомлення:"
+        recent_messages = get_all_messages(limit=5)
+    
+    if not recent_messages:
+        text = "💬 Повідомлень не знайдено."
+        await query.edit_message_text(text, reply_markup=get_back_keyboard("messages"))
+        return
+    
+    all_messages = get_all_messages(limit=5, offset=0)
+    has_more = len(all_messages) >= 5
+    
+    text = "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n"
+    for msg in recent_messages:
+        text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+        text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+        text += f"📅 Час: {msg['created_at'][:16]}\n"
+        text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+        text += f"{'─'*40}\n"
+    
+    await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
+    return
+
+elif data == "admin_messages_more":
+    more_messages = get_more_messages(user_id, count=5)
+    if not more_messages:
+        text = "💬 Більше повідомлень не знайдено."
+        await query.edit_message_text(text, reply_markup=get_back_keyboard("messages"), parse_mode='HTML')
+        return
+    
+    text = "💬 <b>ЩЕ ПОВІДОМЛЕННЯ</b>\n\n"
+    for msg in more_messages:
+        text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+        text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+        text += f"📅 Час: {msg['created_at'][:16]}\n"
+        text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+        text += f"{'─'*40}\n"
+    
+    next_messages = get_all_messages(limit=1, offset=messages_offset.get(user_id, 0))
+    has_more = len(next_messages) > 0
+    
+    await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
+    return
+
+elif data == "admin_messages_all":
+    messages = get_all_messages(limit=20)
+    if not messages:
+        text = "💬 Повідомлень поки немає"
+    else:
+        text = "💬 <b>ВСІ ПОВІДОМЛЕННЯ</b>\n\n"
+        for msg in messages:
+            text += f"💬 <b>Повідомлення #{msg['id']}</b>\n"
+            text += f"👤 Клієнт: {msg['user_name']} (@{msg['username']})\n"
+            text += f"📅 Час: {msg['created_at'][:16]}\n"
+            text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
+            text += f"{'─'*40}\n"
+    
+    all_messages = get_all_messages(limit=5, offset=0)
+    has_more = len(all_messages) >= 5
+    
+    await query.edit_message_text(text, reply_markup=get_messages_pagination_keyboard(user_id, has_more), parse_mode='HTML')
+    return
+
+elif data == "admin_messages_details":
+    messages = get_all_messages(limit=50)
+    if not messages:
+        await query.edit_message_text("❌ Повідомлень не знайдено", reply_markup=get_back_keyboard("messages"))
+        return
+    keyboard = []
+    for msg in messages[:20]:
+        user_name = msg['user_name']
+        msg_id = msg['id']
+        created_at = msg['created_at'][:16] if msg['created_at'] else 'Н/Д'
+        text_preview = msg['text'][:30] + ('...' if len(msg['text']) > 30 else '')
+        keyboard.append([InlineKeyboardButton(
+            f"💬 #{msg_id} - {user_name} - {created_at}\n📝 {text_preview}", 
+            callback_data=f"message_view_{msg_id}"
+        )])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_messages")])
+    await query.edit_message_text("📋 Детальний перегляд повідомлень\n\nОберіть повідомлення:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data.startswith("message_view_"):
+    try:
+        message_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу message_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID повідомлення", reply_markup=get_back_keyboard("messages"))
+        return
+    
+    msg = get_message_by_id(message_id)
+    if not msg:
+        await query.edit_message_text("❌ Повідомлення не знайдено", reply_markup=get_back_keyboard("messages"))
+        return
+    
+    text = format_message_text(msg)
+    await query.edit_message_text(
+        text,
+        reply_markup=get_message_actions_menu(message_id, msg['user_id']),
+        parse_mode='HTML'
+    )
+    return
+
+elif data.startswith("reply_user_"):
+    try:
+        user_id_to_reply = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу user_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID користувача", reply_markup=get_back_keyboard("messages"))
+        return
+    
+    user_data = get_user_by_id(user_id_to_reply)
+    
+    admin_sessions[user_id] = {
+        "state": "authenticated",
+        "action": "reply_to_user",
+        "customer_id": user_id_to_reply
+    }
+    await query.edit_message_text(
+        f"📝 Відповідь користувачу {user_data['first_name'] if user_data else '#'}{user_id_to_reply}\n\nВведіть текст повідомлення:",
+        reply_markup=get_back_keyboard("messages")
+    )
+    return
+
+elif data == "messages_all_file":
+    messages = get_all_messages(limit=1000)
+    if not messages:
+        await query.edit_message_text("💬 Повідомлень поки немає", reply_markup=get_back_keyboard("messages"))
+        return
+    file_data = generate_messages_report(messages, "txt")
+    await query.message.reply_document(
+        document=file_data,
+        filename=f"all_messages_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="💬 Всі повідомлення користувачів"
+    )
+    await query.edit_message_text("✅ Файл з повідомленнями згенеровано!", reply_markup=get_back_keyboard("messages"))
+    return
+
+elif data == "admin_customers":
+    await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
+    return
+
+elif data == "admin_customers_all":
+    users = get_all_users()
+    if not users:
+        text = "👥 Клієнти\n\nКлієнтів не знайдено."
+    else:
+        text = f"👥 ВСІ КЛІЄНТИ\n\nВсього: {len(users)}\n\n"
+        for user in users[:20]:
+            orders = get_user_orders(user['user_id'])
+            quick_orders = get_user_quick_orders(user['user_id'])
             all_orders = orders + quick_orders
             segment = get_customer_segment(user, all_orders)
-            
-            text = f"👤 ПРОФІЛЬ КЛІЄНТА\n\n"
+            created_at = user.get('created_at', '')
             text += f"ID: {user['user_id']}\n"
             text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
             text += f"Username: @{user['username']}\n"
-            text += f"📅 Реєстрація: {user.get('created_at', 'Н/Д')[:16]}\n"
-            text += f"📊 Сегмент: {segment}\n\n"
-            
+            text += f"📊 {segment}\n"
+            text += f"📦 Замовлень: {len(all_orders)}\n"
+            text += f"{'─'*30}\n"
+        if len(users) > 20:
+            text += f"... та ще {len(users) - 20} клієнтів"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_customers_vip":
+    users = get_all_users()
+    text = "👑 VIP КЛІЄНТИ\n\n"
+    count = 0
+    for user in users:
+        orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = orders + quick_orders
+        segment = get_customer_segment(user, all_orders)
+        if "VIP" in segment:
+            count += 1
+            text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
+    if count == 0:
+        text = "👑 VIP клієнтів не знайдено"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_customers_regular":
+    users = get_all_users()
+    text = "⭐ ПОСТІЙНІ КЛІЄНТИ\n\n"
+    count = 0
+    for user in users:
+        orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = orders + quick_orders
+        segment = get_customer_segment(user, all_orders)
+        if "Постійний" in segment:
+            count += 1
+            text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
+    if count == 0:
+        text = "⭐ Постійних клієнтів не знайдено"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_customers_new":
+    users = get_all_users()
+    text = "🆕 НОВІ КЛІЄНТИ\n\n"
+    count = 0
+    for user in users:
+        orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = orders + quick_orders
+        segment = get_customer_segment(user, all_orders)
+        if "Новий" in segment:
+            count += 1
+            text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\n📦 Замовлень: {len(all_orders)}\n{'─'*30}\n"
+    if count == 0:
+        text = "🆕 Нових клієнтів не знайдено"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_customers_inactive":
+    users = get_all_users()
+    text = "💤 НЕАКТИВНІ КЛІЄНТИ\n\n"
+    count = 0
+    for user in users:
+        orders = get_user_orders(user['user_id'])
+        quick_orders = get_user_quick_orders(user['user_id'])
+        all_orders = orders + quick_orders
+        segment = get_customer_segment(user, all_orders)
+        if "Неактивний" in segment:
+            count += 1
+            last_order_date = "Немає"
             if all_orders:
-                total_spent = sum(o.get('total', 0) for o in orders)
-                text += f"📦 Всього замовлень: {len(all_orders)}\n"
-                text += f"💰 Загальна сума: {total_spent:.2f} грн\n"
-                if orders:
-                    text += f"💳 Середній чек: {total_spent/len(orders):.2f} грн\n\n"
-                
-                text += "🆕 Останнє замовлення:\n"
-                last = all_orders[0]
-                last_created = last.get('created_at', '')[:16]
-                last_id = last.get('order_id', last.get('id', 'Н/Д'))
-                text += f"   №{last_id} від {last_created}\n"
-                text += f"   Сума: {last.get('total', 0):.2f} грн\n"
-                text += f"   Статус: {last.get('status', 'нове')}\n"
-            else:
-                text += "📦 Замовлень: 0\n"
-            
-            text += f"\n💬 Повідомлень: {len(messages)}"
-            
-            await query.edit_message_text(
-                text,
-                reply_markup=get_customer_actions_menu(customer_id),
-                parse_mode='HTML'
-            )
-            return
+                last_order = all_orders[0].get('created_at', '')
+                last_order_date = last_order[:16]
+            text += f"ID: {user['user_id']}\nІм'я: {user['first_name']} {user['last_name']}\nUsername: @{user['username']}\nОстаннє замовлення: {last_order_date}\n{'─'*30}\n"
+    if count == 0:
+        text = "💤 Неактивних клієнтів не знайдено"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_customers")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "export_customers":
+    users = get_all_users()
+    if not users:
+        await query.edit_message_text("❌ Немає клієнтів для експорту", reply_markup=get_customers_menu())
+        return
+    
+    file_data = generate_users_report(users)
+    await query.message.reply_document(
+        document=file_data,
+        filename=f"customers_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="👥 Повний звіт по клієнтах"
+    )
+    await query.edit_message_text("✅ Файл з клієнтами згенеровано!", reply_markup=get_customers_menu())
+    return
+
+elif data == "admin_customer_search":
+    admin_sessions[user_id] = {"state": "authenticated", "action": "search_customer_by_phone"}
+    await query.edit_message_text("🔍 Пошук клієнта за телефоном\n\nВведіть номер телефону:", reply_markup=get_back_keyboard("customers"))
+    return
+
+elif data.startswith("customer_view_"):
+    try:
+        customer_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу customer_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID клієнта", reply_markup=get_back_keyboard("customers"))
+        return
+    
+    user = get_user_by_id(customer_id)
+    if not user:
+        await query.edit_message_text("❌ Клієнта не знайдено")
+        return
+    orders = get_user_orders(customer_id)
+    quick_orders = get_user_quick_orders(customer_id)
+    messages = get_user_messages(customer_id)
+    all_orders = orders + quick_orders
+    segment = get_customer_segment(user, all_orders)
+    
+    text = f"👤 ПРОФІЛЬ КЛІЄНТА\n\n"
+    text += f"ID: {user['user_id']}\n"
+    text += f"Ім'я: {user['first_name']} {user['last_name']}\n"
+    text += f"Username: @{user['username']}\n"
+    text += f"📅 Реєстрація: {user.get('created_at', 'Н/Д')[:16]}\n"
+    text += f"📊 Сегмент: {segment}\n\n"
+    
+    if all_orders:
+        total_spent = sum(o.get('total', 0) for o in orders)
+        text += f"📦 Всього замовлень: {len(all_orders)}\n"
+        text += f"💰 Загальна сума: {total_spent:.2f} грн\n"
+        if orders:
+            text += f"💳 Середній чек: {total_spent/len(orders):.2f} грн\n\n"
         
-        elif data.startswith("customer_orders_"):
-            customer_id = int(data.split("_")[2])
-            orders = get_user_orders(customer_id)
-            quick_orders = get_user_quick_orders(customer_id)
-            all_orders = orders + quick_orders
-            
-            if not all_orders:
-                text = "📋 Історія замовлень\n\nУ клієнта немає замовлень."
-            else:
-                text = f"📋 ІСТОРІЯ ЗАМОВЛЕНЬ\n\nВсього: {len(all_orders)}\n\n"
-                for order in all_orders:
-                    created_at = order.get('created_at', '')[:16]
-                    order_id = order.get('order_id', order.get('id', 'Н/Д'))
-                    order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
-                    text += f"{order_type} №{order_id} | {created_at}\n"
-                    text += f"Сума: {order.get('total', 0):.2f} грн\n"
-                    text += f"Статус: {order.get('status', 'нове')}\n"
-                    if order.get('order_type') == 'quick' and order.get('message'):
-                        text += f"💬 {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
-                    text += f"{'─'*30}\n"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-            return
-        
-        elif data.startswith("customer_messages_"):
-            customer_id = int(data.split("_")[2])
-            messages = get_user_messages(customer_id)
-            
-            if not messages:
-                text = "💬 Повідомлення\n\nУ клієнта немає повідомлень."
-            else:
-                text = f"💬 ПОВІДОМЛЕННЯ КЛІЄНТА\n\n"
-                for msg in messages[:10]:
-                    created_at = msg.get('created_at', '')[:16]
-                    text += f"📅 {created_at}\n"
-                    text += f"📝 {msg['text']}\n"
-                    text += f"{'─'*30}\n"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-            return
-        
-        elif data.startswith("customer_message_"):
-            customer_id = int(data.split("_")[2])
-            admin_sessions[user_id] = {"state": "authenticated", "action": "send_message_to_customer", "customer_id": customer_id}
-            await query.edit_message_text("📢 Надіслати повідомлення клієнту\n\nВведіть текст повідомлення:", reply_markup=get_back_keyboard(f"customer_view_{customer_id}"))
-            return
-        
-        elif data.startswith("customer_make_admin_"):
-            customer_id = int(data.split("_")[3])
-            user = get_user_by_id(customer_id)
-            if user:
-                if add_admin(customer_id, user['username'], user_id):
-                    text = f"✅ Користувача {user['first_name']} додано до адмінів!"
-                else:
-                    text = "❌ Помилка при додаванні адміна"
-            else:
-                text = "❌ Користувача не знайдено"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-            return
-        
-        elif data == "admin_broadcast":
-            await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
-            return
-        
-        elif data.startswith("broadcast_"):
-            segment = data.replace("broadcast_", "")
-            admin_sessions[user_id] = {"state": "authenticated", "action": "broadcast", "segment": segment}
-            await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_broadcast_input_back_keyboard())
-            return
-        
-        elif data == "admin_reports":
-            await query.edit_message_text("📁 Генерація звітів\n\nОберіть тип звіту та формат:", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_orders_txt":
-            orders = get_all_orders(include_quick=True)
-            report_data = generate_orders_report(orders, "txt")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="📋 Звіт по замовленнях"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_orders_csv":
-            orders = get_all_orders(include_quick=True)
-            report_data = generate_orders_report(orders, "csv")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
-                caption="📋 Звіт по замовленнях (CSV)"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_users_txt":
-            users = get_all_users()
-            report_data = generate_users_report(users)
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"users_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="👥 Звіт по клієнтах"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_users_csv":
-            await query.edit_message_text("Функція в розробці, використовуйте TXT формат", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_quick_txt":
-            orders = get_quick_orders()
-            report_data = generate_quick_orders_report(orders, "txt")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"quick_orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="⚡ Звіт по швидких замовленнях"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_quick_csv":
-            orders = get_quick_orders()
-            report_data = generate_quick_orders_report(orders, "csv")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"quick_orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
-                caption="⚡ Звіт по швидких замовленнях (CSV)"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_messages_txt":
-            messages = get_all_messages(limit=1000)
-            report_data = generate_messages_report(messages, "txt")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"messages_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="💬 Звіт по повідомленнях"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_messages_csv":
-            messages = get_all_messages(limit=1000)
-            report_data = generate_messages_report(messages, "csv")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"messages_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
-                caption="💬 Звіт по повідомленнях (CSV)"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "report_stats_txt":
-            stats = get_statistics()
-            report_data = generate_stats_report(stats, "txt")
-            await query.message.reply_document(
-                document=report_data,
-                filename=f"stats_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
-                caption="📊 Статистика"
-            )
-            await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
-            return
-        
-        elif data == "admin_manage_admins":
-            await query.edit_message_text("👑 Керування адміністраторами\n\nОберіть дію:", reply_markup=get_admins_menu())
-            return
-        
-        elif data == "admin_list":
-            admins = get_all_admins()
-            if not admins:
-                text = "📋 Список адмінів\n\nАдмінів не знайдено."
-            else:
-                text = "📋 СПИСОК АДМІНІСТРАТОРІВ\n\n"
-                for admin in admins:
-                    added_at = admin.get('added_at', '')[:16]
-                    text += f"ID: {admin['user_id']}\nUsername: @{admin['username']}\nДодано: {added_at}\n{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_add":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "add_admin"}
-            await query.edit_message_text("➕ Додавання адміністратора\n\nВведіть Telegram ID користувача:", reply_markup=get_back_keyboard("main"))
-            return
-        
-        elif data == "admin_remove":
-            admins = get_all_admins()
-            if not admins:
-                await query.edit_message_text("❌ Адмінів не знайдено", reply_markup=get_admins_menu())
-                return
-            keyboard = []
-            for admin in admins:
-                if admin['user_id'] != user_id:
-                    keyboard.append([InlineKeyboardButton(f"❌ {admin['user_id']} - @{admin['username']}", callback_data=f"remove_admin_{admin['user_id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
-            await query.edit_message_text("🗑 Видалення адміністратора\n\nОберіть адміна для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data.startswith("remove_admin_"):
-            admin_id = int(data.split("_")[2])
-            if admin_id == user_id:
-                text = "❌ Не можна видалити самого себе!"
-            elif remove_admin(admin_id):
-                text = "✅ Адміна успішно видалено!"
-            else:
-                text = "❌ Помилка при видаленні адміна"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_stats":
-            stats = get_statistics()
-            text = "📊 СТАТИСТИКА\n\n"
-            text += f"📋 Замовлень: {stats.get('total_orders', 0)}\n"
-            text += f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n"
-            text += f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n"
-            text += f"👥 Клієнтів: {stats.get('total_users', 0)}\n"
-            text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
-            text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
-            text += "📊 Замовлення за останні 30 днів:\n"
-            text += f"   Кількість: {stats.get('last_30_days_orders', 0)}\n"
-            text += f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n"
-            text += "📊 Статуси замовлень:\n"
-            for status, count in stats.get('orders_by_status', {}).items():
-                text += f"   • {status}: {count}\n"
-            text += "\n👥 Сегментація клієнтів:\n"
-            segments = stats.get('segments', {})
-            text += f"   👑 VIP: {segments.get('vip', 0)}\n"
-            text += f"   ⭐ Постійні: {segments.get('regular', 0)}\n"
-            text += f"   🆕 Нові: {segments.get('new', 0)}\n"
-            text += f"   📊 Активні: {segments.get('active', 0)}\n"
-            text += f"   💤 Неактивні: {segments.get('inactive', 0)}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_settings":
-            await query.edit_message_text("⚙️ Налаштування\n\nОберіть розділ:", reply_markup=get_settings_menu())
-            return
-        
-        elif data == "admin_settings_password":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "change_password"}
-            await query.edit_message_text("🔑 Зміна пароля\n\nВведіть новий пароль:", reply_markup=get_back_keyboard("main"))
-            return
-        
+        text += "🆕 Останнє замовлення:\n"
+        last = all_orders[0]
+        last_created = last.get('created_at', '')[:16]
+        last_id = last.get('order_id', last.get('id', 'Н/Д'))
+        text += f"   №{last_id} від {last_created}\n"
+        text += f"   Сума: {last.get('total', 0):.2f} грн\n"
+        text += f"   Статус: {last.get('status', 'нове')}\n"
+    else:
+        text += "📦 Замовлень: 0\n"
+    
+    text += f"\n💬 Повідомлень: {len(messages)}"
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=get_customer_actions_menu(customer_id),
+        parse_mode='HTML'
+    )
+    return
+
+elif data.startswith("customer_orders_"):
+    try:
+        customer_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу customer_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID клієнта", reply_markup=get_back_keyboard("customers"))
+        return
+    
+    orders = get_user_orders(customer_id)
+    quick_orders = get_user_quick_orders(customer_id)
+    all_orders = orders + quick_orders
+    
+    if not all_orders:
+        text = "📋 Історія замовлень\n\nУ клієнта немає замовлень."
+    else:
+        text = f"📋 ІСТОРІЯ ЗАМОВЛЕНЬ\n\nВсього: {len(all_orders)}\n\n"
+        for order in all_orders:
+            created_at = order.get('created_at', '')[:16]
+            order_id = order.get('order_id', order.get('id', 'Н/Д'))
+            order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
+            text += f"{order_type} №{order_id} | {created_at}\n"
+            text += f"Сума: {order.get('total', 0):.2f} грн\n"
+            text += f"Статус: {order.get('status', 'нове')}\n"
+            if order.get('order_type') == 'quick' and order.get('message'):
+                text += f"💬 {order['message'][:50]}{'...' if len(order['message']) > 50 else ''}\n"
+            text += f"{'─'*30}\n"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    return
+
+elif data.startswith("customer_messages_"):
+    try:
+        customer_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу customer_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID клієнта", reply_markup=get_back_keyboard("customers"))
+        return
+    
+    messages = get_user_messages(customer_id)
+    
+    if not messages:
+        text = "💬 Повідомлення\n\nУ клієнта немає повідомлень."
+    else:
+        text = f"💬 ПОВІДОМЛЕННЯ КЛІЄНТА\n\n"
+        for msg in messages[:10]:
+            created_at = msg.get('created_at', '')[:16]
+            text += f"📅 {created_at}\n"
+            text += f"📝 {msg['text']}\n"
+            text += f"{'─'*30}\n"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    return
+
+elif data.startswith("customer_message_"):
+    try:
+        customer_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу customer_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID клієнта", reply_markup=get_back_keyboard("customers"))
+        return
+    
+    admin_sessions[user_id] = {"state": "authenticated", "action": "send_message_to_customer", "customer_id": customer_id}
+    await query.edit_message_text("📢 Надіслати повідомлення клієнту\n\nВведіть текст повідомлення:", reply_markup=get_back_keyboard(f"customer_view_{customer_id}"))
+    return
+
+elif data.startswith("customer_make_admin_"):
+    try:
+        customer_id = int(data.split("_")[3])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу customer_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID клієнта", reply_markup=get_back_keyboard("customers"))
+        return
+    
+    user = get_user_by_id(customer_id)
+    if user:
+        if add_admin(customer_id, user['username'], user_id):
+            text = f"✅ Користувача {user['first_name']} додано до адмінів!"
         else:
-            logger.warning(f"⚠️ Невідомий callback: {data}")
-            await query.edit_message_text("❌ Невідома команда", reply_markup=get_main_menu())
+            text = "❌ Помилка при додаванні адміна"
+    else:
+        text = "❌ Користувача не знайдено"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=f"customer_view_{customer_id}")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+    return
+
+elif data == "admin_broadcast":
+    await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
+    return
+
+elif data.startswith("broadcast_"):
+    segment = data.replace("broadcast_", "")
+    admin_sessions[user_id] = {"state": "authenticated", "action": "broadcast", "segment": segment}
+    await query.edit_message_text(f"📢 Розсилка для сегменту: {segment}\n\nВведіть текст повідомлення для розсилки:", reply_markup=get_broadcast_input_back_keyboard())
+    return
+
+elif data == "admin_reports":
+    await query.edit_message_text("📁 Генерація звітів\n\nОберіть тип звіту та формат:", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_orders_txt":
+    orders = get_all_orders(include_quick=True)
+    report_data = generate_orders_report(orders, "txt")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="📋 Звіт по замовленнях"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_orders_csv":
+    orders = get_all_orders(include_quick=True)
+    report_data = generate_orders_report(orders, "csv")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="📋 Звіт по замовленнях (CSV)"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_users_txt":
+    users = get_all_users()
+    report_data = generate_users_report(users)
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"users_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="👥 Звіт по клієнтах"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_users_csv":
+    await query.edit_message_text("Функція в розробці, використовуйте TXT формат", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_quick_txt":
+    orders = get_quick_orders()
+    report_data = generate_quick_orders_report(orders, "txt")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"quick_orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="⚡ Звіт по швидких замовленнях"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_quick_csv":
+    orders = get_quick_orders()
+    report_data = generate_quick_orders_report(orders, "csv")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"quick_orders_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="⚡ Звіт по швидких замовленнях (CSV)"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_messages_txt":
+    messages = get_all_messages(limit=1000)
+    report_data = generate_messages_report(messages, "txt")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"messages_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="💬 Звіт по повідомленнях"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_messages_csv":
+    messages = get_all_messages(limit=1000)
+    report_data = generate_messages_report(messages, "csv")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"messages_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="💬 Звіт по повідомленнях (CSV)"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "report_stats_txt":
+    stats = get_statistics()
+    report_data = generate_stats_report(stats, "txt")
+    await query.message.reply_document(
+        document=report_data,
+        filename=f"stats_report_{get_kyiv_time().strftime('%Y%m%d_%H%M%S')}.txt",
+        caption="📊 Статистика"
+    )
+    await query.edit_message_text("✅ Звіт згенеровано!", reply_markup=get_reports_menu())
+    return
+
+elif data == "admin_manage_admins":
+    await query.edit_message_text("👑 Керування адміністраторами\n\nОберіть дію:", reply_markup=get_admins_menu())
+    return
+
+elif data == "admin_list":
+    admins = get_all_admins()
+    if not admins:
+        text = "📋 Список адмінів\n\nАдмінів не знайдено."
+    else:
+        text = "📋 СПИСОК АДМІНІСТРАТОРІВ\n\n"
+        for admin in admins:
+            added_at = admin.get('added_at', '')[:16]
+            text += f"ID: {admin['user_id']}\nUsername: @{admin['username']}\nДодано: {added_at}\n{'─'*30}\n"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_add":
+    admin_sessions[user_id] = {"state": "authenticated", "action": "add_admin"}
+    await query.edit_message_text("➕ Додавання адміністратора\n\nВведіть Telegram ID користувача:", reply_markup=get_back_keyboard("main"))
+    return
+
+elif data == "admin_remove":
+    admins = get_all_admins()
+    if not admins:
+        await query.edit_message_text("❌ Адмінів не знайдено", reply_markup=get_admins_menu())
+        return
+    keyboard = []
+    for admin in admins:
+        if admin['user_id'] != user_id:
+            keyboard.append([InlineKeyboardButton(f"❌ {admin['user_id']} - @{admin['username']}", callback_data=f"remove_admin_{admin['user_id']}")])
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")])
+    await query.edit_message_text("🗑 Видалення адміністратора\n\nОберіть адміна для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data.startswith("remove_admin_"):
+    try:
+        admin_id = int(data.split("_")[2])
+    except (IndexError, ValueError):
+        logger.error(f"Помилка парсингу admin_id з {data}")
+        await query.edit_message_text("❌ Помилка: некоректний ID адміністратора", reply_markup=get_back_keyboard("main"))
+        return
+    
+    if admin_id == user_id:
+        text = "❌ Не можна видалити самого себе!"
+    elif remove_admin(admin_id):
+        text = "✅ Адміна успішно видалено!"
+    else:
+        text = "❌ Помилка при видаленні адміна"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_stats":
+    stats = get_statistics()
+    text = "📊 СТАТИСТИКА\n\n"
+    text += f"📋 Замовлень: {stats.get('total_orders', 0)}\n"
+    text += f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n"
+    text += f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n"
+    text += f"👥 Клієнтів: {stats.get('total_users', 0)}\n"
+    text += f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n"
+    text += f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n"
+    text += "📊 Замовлення за останні 30 днів:\n"
+    text += f"   Кількість: {stats.get('last_30_days_orders', 0)}\n"
+    text += f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n"
+    text += "📊 Статуси замовлень:\n"
+    for status, count in stats.get('orders_by_status', {}).items():
+        text += f"   • {status}: {count}\n"
+    text += "\n👥 Сегментація клієнтів:\n"
+    segments = stats.get('segments', {})
+    text += f"   👑 VIP: {segments.get('vip', 0)}\n"
+    text += f"   ⭐ Постійні: {segments.get('regular', 0)}\n"
+    text += f"   🆕 Нові: {segments.get('new', 0)}\n"
+    text += f"   📊 Активні: {segments.get('active', 0)}\n"
+    text += f"   💤 Неактивні: {segments.get('inactive', 0)}\n"
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_main")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return
+
+elif data == "admin_settings":
+    await query.edit_message_text("⚙️ Налаштування\n\nОберіть розділ:", reply_markup=get_settings_menu())
+    return
+
+elif data == "admin_settings_password":
+    admin_sessions[user_id] = {"state": "authenticated", "action": "change_password"}
+    await query.edit_message_text("🔑 Зміна пароля\n\nВведіть новий пароль:", reply_markup=get_back_keyboard("main"))
+    return
+
+else:
+    logger.warning(f"⚠️ Невідомий callback: {data}")
+    await query.edit_message_text("❌ Невідома команда", reply_markup=get_main_menu())
             
     except Exception as e:
         logger.error(f"❌ Помилка в button_handler: {e}")
@@ -3701,3 +3749,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
