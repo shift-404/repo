@@ -81,11 +81,6 @@ if not DATABASE_URL:
 
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
-
-# Додайте на початку файлу адмін-бота:
-import os
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
-os.makedirs(IMAGE_DIR, exist_ok=True)
 print(f"📁 Папка для зображень: {IMAGE_DIR}")
 
 def get_db_connection():
@@ -2222,11 +2217,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data.startswith("edit_product_image_url_"):
-            # Просто беремо останню частину як ID
+            # Додамо логування
+            logger.info(f"Отримано callback: {data}")
+            parts = data.split("_")
+            logger.info(f"Розбито на частини: {parts}")
+            
             try:
-                product_id = int(data.split("_")[-1])
-            except (IndexError, ValueError):
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                product_id = int(parts[-1])
+                logger.info(f"Отримано ID: {product_id}")
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу: {e}")
+                await query.edit_message_text(f"❌ Помилка: некоректний ID товару. Data: {data}", reply_markup=get_products_menu())
                 return
             
             admin_sessions[user_id] = {
@@ -3909,6 +3910,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
