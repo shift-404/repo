@@ -1089,11 +1089,10 @@ def get_product_text(product_id: int) -> str:
 
 <b>💡 Як використовувати:</b>
 Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
-    """
+"""
     return text
 
 # Знайдіть обробник product_ в button_handler і замініть на:
-
 elif data.startswith("product_"):
     product_id = int(data.split("_")[1])
     product = get_product_by_id(product_id)
@@ -2045,4 +2044,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
