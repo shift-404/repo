@@ -2230,52 +2230,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        elif action == "edit_product_image_file":
-            product_id = session.get("product_id")
-            logger.info(f"📝 Отримано фото для edit_product_image_file, product_id з сесії: {product_id}")
-            
-            if not product_id:
-                logger.error("❌ product_id не знайдено в сесії!")
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update.message.photo:
-                file_id = update.message.photo[-1].file_id
-                logger.info(f"Отримано file_id: {file_id}")
-                
-                # Видаляємо старе фото, якщо є
-                old_product = get_product_by_id(product_id)
-                if old_product and old_product.get('image_path'):
-                    try:
-                        if os.path.exists(old_product['image_path']):
-                            os.remove(old_product['image_path'])
-                            logger.info(f"Видалено старе фото: {old_product['image_path']}")
-                    except Exception as e:
-                        logger.error(f"Помилка видалення старого фото: {e}")
-                
-                # Завантажуємо нове фото
-                image_path = await download_telegram_file(file_id, context.bot)
-                
-                if image_path:
-                    if update_product(product_id, image_path=image_path, image_file_id=file_id):
-                        await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено!", reply_markup=get_products_menu())
-                    else:
-                        await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
-                else:
-                    await update.message.reply_text("❌ Помилка при завантаженні фото", reply_markup=get_products_menu())
-                
-                # ДОДАЄМО ПЕРЕВІРКУ ТУТ - після будь-якого результату
-                product = get_product_by_id(product_id)
-                logger.info(f"📌 Після спроби оновлення: image_path={product.get('image_path')}, image_file_id={product.get('image_file_id')}")
-                # КІНЕЦЬ ПЕРЕВІРКИ
-                
-            else:
-                await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
-                return
-            
-            admin_sessions[user_id].pop("action", None)
-            return
+
         
         elif data.startswith("delete_product_image_"):
             logger.info(f"🔄 Натиснуто кнопку delete_product_image_, data: {data}")
@@ -3973,6 +3928,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
