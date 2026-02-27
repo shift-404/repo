@@ -286,13 +286,24 @@ async def download_image_from_url(url: str) -> tuple:
     """
     Завантажує зображення за URL і повертає (file_path, file_id)
     """
+    logger.info(f"🌐 Спроба завантажити URL: {url}")
+    
+    # Перевіряємо чи URL взагалі доступний
     try:
-        response = requests.get(url, timeout=30)
+        test_response = requests.head(url, timeout=5)
+        logger.info(f"📊 Headers відповіді: {test_response.headers.get('content-type', 'не визначено')}")
+    except Exception as e:
+        logger.error(f"❌ Помилка HEAD запиту: {e}")
+    
+    try:
+        response = requests.get(url, timeout=30, allow_redirects=True)
         response.raise_for_status()
         
         content_type = response.headers.get('content-type', '')
+        logger.info(f"📦 Отримано content-type: {content_type}")
+        
         if not content_type.startswith('image/'):
-            logger.error(f"URL не містить зображення: {content_type}")
+            logger.error(f"❌ URL не містить зображення: {content_type}")
             return None, None
         
         filename = f"url_image_{int(time.time())}.jpg"
@@ -301,19 +312,19 @@ async def download_image_from_url(url: str) -> tuple:
         with open(file_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"Зображення за URL успішно завантажено: {file_path}")
+        logger.info(f"✅ Зображення за URL успішно завантажено: {file_path} (розмір: {len(response.content)} байт)")
         return file_path, None
     except requests.exceptions.Timeout:
-        logger.error(f"Таймаут при завантаженні URL: {url}")
+        logger.error(f"⏱️ Таймаут при завантаженні URL: {url}")
         return None, None
     except requests.exceptions.ConnectionError:
-        logger.error(f"Помилка з'єднання при завантаженні URL: {url}")
+        logger.error(f"🔌 Помилка з'єднання при завантаженні URL: {url}")
         return None, None
     except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP помилка при завантаженні URL {url}: {e}")
+        logger.error(f"🌐 HTTP помилка {e.response.status_code} при завантаженні URL {url}: {e}")
         return None, None
     except Exception as e:
-        logger.error(f"Помилка завантаження зображення за URL {url}: {e}")
+        logger.error(f"❌ Помилка завантаження зображення за URL {url}: {e}")
         return None, None
 
 async def reset_all_orders():
@@ -3928,6 +3939,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
