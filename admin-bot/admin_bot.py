@@ -2284,6 +2284,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        elif data.startswith("delete_product_image_"):
+            # Просто беремо останню частину як ID
+            try:
+                product_id = int(data.split("_")[-1])
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            product = get_product_by_id(product_id)
+            
+            if product and product.get('image_path'):
+                try:
+                    if os.path.exists(product['image_path']):
+                        os.remove(product['image_path'])
+                        logger.info(f"Видалено файл зображення: {product['image_path']}")
+                except Exception as e:
+                    logger.error(f"Помилка видалення файлу: {e}")
+            
+            if update_product(product_id, image_path=None, image_file_id=None):
+                await query.edit_message_text(
+                    f"✅ Фото товару #{product_id} видалено!",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ Помилка при видаленні фото",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
+            return
+        
         elif data == "admin_product_delete":
             products = get_all_products()
             if not products:
@@ -3332,6 +3362,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         session = admin_sessions.get(user_id, {})
         action = session.get("action")
+        logger.info(f"📌 Поточний action: {action}, session: {session}")
         
         if action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
@@ -3418,15 +3449,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "edit_product_image_url":
             product_id = session.get("product_id")
+            logger.info(f"📝 Отримано повідомлення для edit_product_image_url, product_id з сесії: {product_id}, текст: {text}")
+            
             if not product_id:
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                logger.error("❌ product_id не знайдено в сесії!")
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
                 admin_sessions[user_id].pop("action", None)
                 return
             
             # Завантажуємо зображення за URL
+            logger.info(f"Завантаження з URL: {text}")
             image_path, _ = await download_image_from_url(text)
             
             if image_path:
+                logger.info(f"Фото завантажено: {image_path}")
                 # Видаляємо старе фото, якщо є
                 old_product = get_product_by_id(product_id)
                 if old_product and old_product.get('image_path'):
@@ -3443,6 +3479,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
             else:
+                logger.error(f"Не вдалося завантажити зображення за URL: {text}")
                 await update.message.reply_text("❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", reply_markup=get_products_menu())
             
             admin_sessions[user_id].pop("action", None)
@@ -3450,13 +3487,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "edit_product_image_file":
             product_id = session.get("product_id")
+            logger.info(f"📝 Отримано фото для edit_product_image_file, product_id з сесії: {product_id}")
+            
             if not product_id:
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                logger.error("❌ product_id не знайдено в сесії!")
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
                 admin_sessions[user_id].pop("action", None)
                 return
             
             if update.message.photo:
                 file_id = update.message.photo[-1].file_id
+                logger.info(f"Отримано file_id: {file_id}")
                 
                 # Видаляємо старе фото, якщо є
                 old_product = get_product_by_id(product_id)
@@ -3904,10 +3945,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
