@@ -290,21 +290,42 @@ async def download_image_from_url(url: str) -> tuple:
     
     # Перевіряємо чи URL взагалі доступний
     try:
-        test_response = requests.head(url, timeout=5)
+        test_response = requests.head(url, timeout=10, allow_redirects=True)
         logger.info(f"📊 Headers відповіді: {test_response.headers.get('content-type', 'не визначено')}")
+        logger.info(f"📊 Статус код: {test_response.status_code}")
     except Exception as e:
         logger.error(f"❌ Помилка HEAD запиту: {e}")
     
+    # Спробуємо спочатку простий GET запит до відомого сайту, щоб перевірити інтернет
     try:
-        response = requests.get(url, timeout=30, allow_redirects=True)
+        test_internet = requests.get("https://www.google.com", timeout=5)
+        logger.info(f"🌐 Інтернет доступний, статус: {test_internet.status_code}")
+    except Exception as e:
+        logger.error(f"❌ Немає доступу до інтернету: {e}")
+        return None, None
+    
+    try:
+        # Додаємо User-Agent, щоб обійти деякі блокування
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, timeout=30, allow_redirects=True, headers=headers)
         response.raise_for_status()
         
         content_type = response.headers.get('content-type', '')
         logger.info(f"📦 Отримано content-type: {content_type}")
+        logger.info(f"📦 Розмір відповіді: {len(response.content)} байт")
         
         if not content_type.startswith('image/'):
-            logger.error(f"❌ URL не містить зображення: {content_type}")
-            return None, None
+            # Якщо content-type не image/, але це може бути зображення з неправильним заголовком
+            # Перевіряємо перші кілька байт на сигнатуру зображення
+            if response.content[:4] in [b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'\x89PNG', b'GIF8']:
+                logger.info("📸 Файл схожий на зображення за сигнатурою")
+            else:
+                logger.error(f"❌ URL не містить зображення: {content_type}")
+                # Збережемо перші 100 байт для аналізу
+                logger.error(f"Перші байти: {response.content[:20]}")
+                return None, None
         
         filename = f"url_image_{int(time.time())}.jpg"
         file_path = os.path.join(IMAGE_DIR, filename)
@@ -313,6 +334,13 @@ async def download_image_from_url(url: str) -> tuple:
             f.write(response.content)
         
         logger.info(f"✅ Зображення за URL успішно завантажено: {file_path} (розмір: {len(response.content)} байт)")
+        
+        # Перевіряємо чи файл зберігся
+        if os.path.exists(file_path):
+            logger.info(f"✅ Файл існує, розмір: {os.path.getsize(file_path)} байт")
+        else:
+            logger.error("❌ Файл не створився!")
+            
         return file_path, None
     except requests.exceptions.Timeout:
         logger.error(f"⏱️ Таймаут при завантаженні URL: {url}")
@@ -321,12 +349,13 @@ async def download_image_from_url(url: str) -> tuple:
         logger.error(f"🔌 Помилка з'єднання при завантаженні URL: {url}")
         return None, None
     except requests.exceptions.HTTPError as e:
-        logger.error(f"🌐 HTTP помилка {e.response.status_code} при завантаженні URL {url}: {e}")
+        logger.error(f"🌐 HTTP помилка {e.response.status_code if hasattr(e, 'response') else 'unknown'} при завантаженні URL {url}: {e}")
         return None, None
     except Exception as e:
         logger.error(f"❌ Помилка завантаження зображення за URL {url}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None, None
-
 async def reset_all_orders():
     conn = get_db_connection()
     if not conn:
@@ -3939,6 +3968,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
