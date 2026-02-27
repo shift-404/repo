@@ -2196,7 +2196,135 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
             return
         
-edit_product_image_url_
+        # СПОЧАТКУ специфічні обробники для фото (вони мають бути ПЕРЕД edit_product_)
+        elif data.startswith("edit_product_image_url_"):
+            logger.info(f"🔄 Натиснуто кнопку edit_product_image_url_, data: {data}")
+            parts = data.split("_")
+            logger.info(f"Розбито на частини: {parts}")
+            try:
+                product_id = int(parts[-1])
+                logger.info(f"✅ Розпарсено product_id: {product_id}")
+            except (IndexError, ValueError) as e:
+                logger.error(f"❌ Помилка парсингу ID: {e}")
+                await query.edit_message_text("❌ Помилка: некоректний ID товару (помилка парсингу)", reply_markup=get_products_menu())
+                return
+
+            # Перевіряємо, чи товар існує
+            product = get_product_by_id(product_id)
+            if not product:
+                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
+                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
+                return
+
+            # Зберігаємо стан
+            admin_sessions[user_id] = {
+                "state": "authenticated",
+                "action": "edit_product_image_url",
+                "product_id": product_id
+            }
+            logger.info(f"✅ Стан збережено в admin_sessions[{user_id}]: {admin_sessions[user_id]}")
+
+            await query.edit_message_text(
+                "🌐 Введіть URL зображення:",
+                reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+            )
+            return
+        
+        elif data.startswith("edit_product_image_file_"):
+            logger.info(f"🔄 Натиснуто кнопку edit_product_image_file_, data: {data}")
+            parts = data.split("_")
+            logger.info(f"Розбито на частини: {parts}")
+            try:
+                product_id = int(parts[-1])
+                logger.info(f"✅ Розпарсено product_id: {product_id}")
+            except (IndexError, ValueError) as e:
+                logger.error(f"❌ Помилка парсингу ID: {e}")
+                await query.edit_message_text("❌ Помилка: некоректний ID товару (помилка парсингу)", reply_markup=get_products_menu())
+                return
+
+            product = get_product_by_id(product_id)
+            if not product:
+                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
+                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
+                return
+
+            admin_sessions[user_id] = {
+                "state": "authenticated",
+                "action": "edit_product_image_file",
+                "product_id": product_id
+            }
+            logger.info(f"✅ Стан збережено в admin_sessions[{user_id}]: {admin_sessions[user_id]}")
+
+            await query.edit_message_text(
+                "📷 Надішліть фото товару:",
+                reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+            )
+            return
+        
+        elif data.startswith("delete_product_image_"):
+            logger.info(f"🔄 Натиснуто кнопку delete_product_image_, data: {data}")
+            try:
+                product_id = int(data.split("_")[-1])
+                logger.info(f"✅ Розпарсено product_id: {product_id}")
+            except (IndexError, ValueError) as e:
+                logger.error(f"❌ Помилка парсингу ID: {e}")
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            product = get_product_by_id(product_id)
+            if not product:
+                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
+                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
+                return
+            
+            if product and product.get('image_path'):
+                try:
+                    if os.path.exists(product['image_path']):
+                        os.remove(product['image_path'])
+                        logger.info(f"Видалено файл зображення: {product['image_path']}")
+                except Exception as e:
+                    logger.error(f"Помилка видалення файлу: {e}")
+            
+            if update_product(product_id, image_path=None, image_file_id=None):
+                await query.edit_message_text(
+                    f"✅ Фото товару #{product_id} видалено!",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ Помилка при видаленні фото",
+                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
+                )
+            return
+        
+        # ТІЛЬКИ ПІСЛЯ специфічних обробників йде загальний edit_product_
+        elif data.startswith("edit_product_"):
+            logger.info(f"📝 Натиснуто загальний edit_product_ з data: {data}")
+            try:
+                product_id = int(data.split("_")[2])
+                logger.info(f"✅ Розпарсено product_id: {product_id}")
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            product = get_product_by_id(product_id)
+            if not product:
+                await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                return
+            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_field", "product_id": product_id}
+            keyboard = [
+                [InlineKeyboardButton("📝 Назва", callback_data=f"edit_field_name_{product_id}")],
+                [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
+                [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
+                [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
+                [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
+            ]
+            await query.edit_message_text(
+                f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
         
         elif data == "admin_product_delete":
             products = get_all_products()
@@ -3829,4 +3957,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
