@@ -761,37 +761,47 @@ class Database:
         finally:
             conn.close()
     
-    @staticmethod
-    def get_all_products():
-        conn = Database.get_connection()
-        if not conn:
-            return []
+@staticmethod
+def get_all_products():
+    conn = Database.get_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM products ORDER BY id')
+        rows = cursor.fetchall()
         
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM products ORDER BY id')
-            rows = cursor.fetchall()
+        products = []
+        for row in rows:
+            product = {
+                "id": row['id'],
+                "name": row['name'],
+                "price": row['price'],
+                "category": row['category'],
+                "description": row['description'],
+                "unit": row['unit'],
+                "image": row['image'],
+                "image_file_id": row.get('image_file_id'),
+                "image_path": row.get('image_path'),
+                "details": row['details']
+            }
+            # ДОДАЙТЕ ЦЕ ЛОГУВАННЯ
+            if product['image_path']:
+                logger.info(f"📸 Товар ID={product['id']} має image_path={product['image_path']}")
+                # Перевіряємо чи файл існує
+                if os.path.exists(product['image_path']):
+                    logger.info(f"✅ Файл існує, розмір: {os.path.getsize(product['image_path'])} байт")
+                else:
+                    logger.error(f"❌ Файл НЕ існує: {product['image_path']}")
             
-            products = []
-            for row in rows:
-                products.append({
-                    "id": row['id'],
-                    "name": row['name'],
-                    "price": row['price'],
-                    "category": row['category'],
-                    "description": row['description'],
-                    "unit": row['unit'],
-                    "image": row['image'],
-                    "image_file_id": row.get('image_file_id'),
-                    "image_path": row.get('image_path'),
-                    "details": row['details']
-                })
-            return products
-        except Exception as e:
-            logger.error(f"Помилка отримання товарів: {e}")
-            return []
-        finally:
-            conn.close()
+            products.append(product)
+        return products
+    except Exception as e:
+        logger.error(f"Помилка отримання товарів: {e}")
+        return []
+    finally:
+        conn.close()
     
     @staticmethod
     def get_product_by_id(product_id: int):
@@ -2024,3 +2034,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
