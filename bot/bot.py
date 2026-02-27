@@ -761,37 +761,37 @@ class Database:
         finally:
             conn.close()
     
-@staticmethod
-def get_all_products():
-    conn = Database.get_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM products ORDER BY id')
-        rows = cursor.fetchall()
+    @staticmethod
+    def get_all_products():
+        conn = Database.get_connection()
+        if not conn:
+            return []
         
-        products = []
-        for row in rows:
-            products.append({
-                "id": row['id'],
-                "name": row['name'],
-                "price": row['price'],
-                "category": row['category'],
-                "description": row['description'],
-                "unit": row['unit'],
-                "image": row['image'],
-                "image_file_id": row.get('image_file_id'),
-                "image_path": row.get('image_path'),  # Це поле має бути
-                "details": row['details']
-            })
-        return products
-    except Exception as e:
-        logger.error(f"Помилка отримання товарів: {e}")
-        return []
-    finally:
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM products ORDER BY id')
+            rows = cursor.fetchall()
+            
+            products = []
+            for row in rows:
+                products.append({
+                    "id": row['id'],
+                    "name": row['name'],
+                    "price": row['price'],
+                    "category": row['category'],
+                    "description": row['description'],
+                    "unit": row['unit'],
+                    "image": row['image'],
+                    "image_file_id": row.get('image_file_id'),
+                    "image_path": row.get('image_path'),
+                    "details": row['details']
+                })
+            return products
+        except Exception as e:
+            logger.error(f"Помилка отримання товарів: {e}")
+            return []
+        finally:
+            conn.close()
     
     @staticmethod
     def get_product_by_id(product_id: int):
@@ -1295,54 +1295,54 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="products")
         
-elif data.startswith("product_"):
-    product_id = int(data.split("_")[1])
-    product = get_product_by_id(product_id)
-    product_text = get_product_text(product_id)
-    
-    logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path')}")
-    
-    # Спочатку пробуємо відправити з локального файлу (image_path)
-    if product and product.get('image_path'):
-        try:
-            # Перевіряємо чи файл існує
-            if os.path.exists(product['image_path']):
-                logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                with open(product['image_path'], 'rb') as photo:
+        elif data.startswith("product_"):
+            product_id = int(data.split("_")[1])
+            product = get_product_by_id(product_id)
+            product_text = get_product_text(product_id)
+            
+            logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path') if product else None}")
+            
+            # Спочатку пробуємо відправити з локального файлу (image_path)
+            if product and product.get('image_path'):
+                try:
+                    # Перевіряємо чи файл існує
+                    if os.path.exists(product['image_path']):
+                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
+                        with open(product['image_path'], 'rb') as photo:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo,
+                                caption=product_text,
+                                parse_mode='HTML',
+                                reply_markup=get_product_detail_menu(product_id)
+                            )
+                        await query.message.delete()
+                        Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                        return
+                    else:
+                        logger.warning(f"Файл не знайдено: {product['image_path']}")
+                except Exception as e:
+                    logger.error(f"Помилка відправки фото з файлу: {e}")
+            
+            # Якщо немає файлу або помилка, пробуємо file_id
+            if product and product.get('image_file_id'):
+                try:
+                    logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
                     await context.bot.send_photo(
                         chat_id=chat_id,
-                        photo=photo,
+                        photo=product['image_file_id'],
                         caption=product_text,
                         parse_mode='HTML',
                         reply_markup=get_product_detail_menu(product_id)
                     )
-                await query.message.delete()
-                Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                return
+                    await query.message.delete()
+                except Exception as e:
+                    logger.error(f"Помилка відправки фото з file_id: {e}")
+                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             else:
-                logger.warning(f"Файл не знайдено: {product['image_path']}")
-        except Exception as e:
-            logger.error(f"Помилка відправки фото з файлу: {e}")
-    
-    # Якщо немає файлу або помилка, пробуємо file_id
-    if product and product.get('image_file_id'):
-        try:
-            logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
-            await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=product['image_file_id'],
-                caption=product_text,
-                parse_mode='HTML',
-                reply_markup=get_product_detail_menu(product_id)
-            )
-            await query.message.delete()
-        except Exception as e:
-            logger.error(f"Помилка відправки фото з file_id: {e}")
-            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
-    else:
-        await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
-    
-    Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            
+            Database.save_user_session(user_id, last_section=f"product_{product_id}")
         
         elif data.startswith("add_to_cart_"):
             product_id = int(data.split("_")[3])
@@ -2024,4 +2024,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
