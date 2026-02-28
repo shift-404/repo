@@ -61,6 +61,36 @@ def format_kyiv_time(dt_str):
     except:
         return str(dt_str)[:16]
 
+import os
+import sys
+
+# Діагностика
+print("📂 Поточна папка:", os.getcwd())
+print("📄 Файли в папці:", os.listdir('.'))
+
+# Перевіряємо наявність requirements.txt
+if os.path.exists('requirements.txt'):
+    print("✅ requirements.txt знайдено")
+    with open('requirements.txt', 'r') as f:
+        print("📄 Вміст requirements.txt:")
+        print(f.read())
+else:
+    print("❌ requirements.txt НЕ знайдено!")
+
+# Перевіряємо чи requests встановлено
+try:
+    import requests
+    print("✅ requests вже встановлено")
+except ImportError:
+    print("❌ requests не встановлено")
+    
+    # Спробуємо встановити прямо зараз
+    import subprocess
+    print("📦 Встановлюю requests...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    print("✅ requests встановлено")
+    import requests
+
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not TOKEN:
     logger.error("ADMIN_BOT_TOKEN не знайдено!")
@@ -4003,6 +4033,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
