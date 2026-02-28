@@ -314,13 +314,13 @@ async def download_telegram_file(file_id: str, bot: Bot) -> str:
 
 async def download_image_from_url(url: str) -> tuple:
     """
-    Завантажує зображення за URL і повертає (None, None) - тепер тільки для відправки в Telegram
+    Завантажує зображення за URL і повертає (file_path, None)
     """
     logger.info(f"🌐 Спроба завантажити URL: {url}")
     
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         response = requests.get(url, timeout=30, allow_redirects=True, headers=headers)
         response.raise_for_status()
@@ -332,11 +332,11 @@ async def download_image_from_url(url: str) -> tuple:
         with open(file_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"✅ Зображення тимчасово збережено: {file_path}")
+        logger.info(f"✅ Зображення тимчасово збережено: {file_path} (розмір: {len(response.content)} байт)")
         return file_path, None
         
     except Exception as e:
-        logger.error(f"❌ Помилка завантаження зображення: {e}")
+        logger.error(f"❌ Помилка завантаження зображення за URL {url}: {e}")
         return None, None
         
 async def reset_all_orders():
@@ -4000,5 +4000,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
