@@ -11,7 +11,6 @@ from io import StringIO, BytesIO
 import asyncio
 import traceback
 import time
-# ТУТ НЕ МАЄ БУТИ import requests!
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, InputMediaPhoto
 from telegram.ext import (
@@ -23,20 +22,25 @@ from telegram.ext import (
     ContextTypes
 )
 
-import sys
-import os
-
+# Діагностика
 print("🚀 Бот запускається...")
 print(f"📂 Поточна папка: {os.getcwd()}")
 print(f"📄 Файли в папці: {os.listdir('.')}")
 
-# Перевіряємо токен
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
+# ВИПРАВЛЕНО: використовуємо BOT_TOKEN для основного бота
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
     print("❌ ПОМИЛКА: BOT_TOKEN не знайдено!")
     sys.exit(1)
 else:
-    print(f"✅ BOT_TOKEN знайдено: {BOT_TOKEN[:5]}...")
+    print(f"✅ BOT_TOKEN знайдено: {TOKEN[:5]}...")
+
+# Для сповіщень адмінам використовуємо ADMIN_BOT_TOKEN
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
+if not ADMIN_BOT_TOKEN:
+    print("⚠️ ПОПЕРЕДЖЕННЯ: ADMIN_BOT_TOKEN не знайдено!")
+else:
+    print(f"✅ ADMIN_BOT_TOKEN знайдено: {ADMIN_BOT_TOKEN[:5]}...")
 
 # Перевіряємо DATABASE_URL
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -48,7 +52,6 @@ else:
 
 print("🔄 Спроба підключитися до бази даних...")
 try:
-    import psycopg2
     conn = psycopg2.connect(DATABASE_URL)
     conn.close()
     print("✅ Підключення до БД успішне")
@@ -2677,6 +2680,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
