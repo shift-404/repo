@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import asyncio
+import requests
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
@@ -45,10 +46,14 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
-# Директорія для зображень - така ж як в адмін-боті
+# Директорія для зображень
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
 print(f"📁 Папка для зображень: {IMAGE_DIR}")
+
+# Базовий URL для зображень (якщо використовуєте зовнішнє сховище)
+# Можна налаштувати через змінні оточення
+BASE_IMAGE_URL = os.getenv("BASE_IMAGE_URL", "")
 
 def get_db_connection():
     try:
@@ -162,6 +167,7 @@ def init_database():
                 image TEXT DEFAULT '🥫',
                 image_file_id TEXT,
                 image_path TEXT,
+                image_url TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -175,6 +181,12 @@ def init_database():
                 added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Додаємо колонку image_url якщо її немає
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
+        except:
+            pass
         
         try:
             cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
@@ -198,21 +210,21 @@ def init_database():
             products = [
                 (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                 "банка", "🥫", None, None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
                 
                 (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                 "банка", "🌶️", None, None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
                 
                 (3, "Паштет з артишоку", 290, "паштети",
                  "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", None, None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+                 "банка", "🍯", None, None, None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
             ]
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_file_id, image_path, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_file_id, image_path, image_url, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
         
@@ -786,6 +798,7 @@ class Database:
                     "image": row['image'],
                     "image_file_id": row.get('image_file_id'),
                     "image_path": row.get('image_path'),
+                    "image_url": row.get('image_url'),
                     "details": row['details']
                 }
                 products.append(product)
@@ -1305,64 +1318,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             logger.info(f"📦 Відкрито товар #{product_id}")
             
-            # Спочатку пробуємо відправити з file_id (Telegram зберігає фото на своїх серверах)
-            if product and product.get('image_file_id'):
-                try:
-                    logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=product['image_file_id'],
-                        caption=product_text,
-                        parse_mode='HTML',
-                        reply_markup=get_product_detail_menu(product_id)
-                    )
-                    await query.message.delete()
-                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                    return
-                except Exception as e:
-                    logger.error(f"❌ Помилка відправки фото з file_id: {e}")
-                    # Якщо file_id не працює, пробуємо з локального файлу
-                    if product.get('image_path'):
-                        try:
-                            if os.path.exists(product['image_path']):
-                                logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                                with open(product['image_path'], 'rb') as photo:
-                                    await context.bot.send_photo(
-                                        chat_id=chat_id,
-                                        photo=photo,
-                                        caption=product_text,
-                                        parse_mode='HTML',
-                                        reply_markup=get_product_detail_menu(product_id)
-                                    )
-                                await query.message.delete()
-                                return
-                            else:
-                                logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
-                        except Exception as e:
-                            logger.error(f"❌ Помилка відправки фото з файлу: {e}")
-            
-            # Якщо немає file_id, пробуємо з локального файлу
-            elif product and product.get('image_path'):
-                try:
-                    if os.path.exists(product['image_path']):
-                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                        with open(product['image_path'], 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=product_text,
-                                parse_mode='HTML',
-                                reply_markup=get_product_detail_menu(product_id)
-                            )
-                        await query.message.delete()
-                    else:
-                        logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
-                        await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
-                except Exception as e:
-                    logger.error(f"❌ Помилка відправки фото з файлу: {e}")
-                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
-            else:
-                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+            # Відправляємо тільки текст, без фото, оскільки file_id не працює між ботами
+            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             
             Database.save_user_session(user_id, last_section=f"product_{product_id}")
         
