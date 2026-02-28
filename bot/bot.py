@@ -45,8 +45,10 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
+# Директорія для зображень - така ж як в адмін-боті
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
+print(f"📁 Папка для зображень: {IMAGE_DIR}")
 
 def get_db_connection():
     try:
@@ -786,13 +788,6 @@ class Database:
                     "image_path": row.get('image_path'),
                     "details": row['details']
                 }
-                if product['image_path']:
-                    logger.info(f"📸 Товар ID={product['id']} має image_path={product['image_path']}")
-                    if os.path.exists(product['image_path']):
-                        logger.info(f"✅ Файл існує, розмір: {os.path.getsize(product['image_path'])} байт")
-                    else:
-                        logger.error(f"❌ Файл НЕ існує: {product['image_path']}")
-                
                 products.append(product)
             return products
         except Exception as e:
@@ -1308,31 +1303,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product = get_product_by_id(product_id)
             product_text = get_product_text(product_id)
             
-            logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path') if product else None}")
+            logger.info(f"📦 Відкрито товар #{product_id}")
             
-            # Спочатку пробуємо відправити з локального файлу (image_path)
-            if product and product.get('image_path'):
-                try:
-                    # Перевіряємо чи файл існує
-                    if os.path.exists(product['image_path']):
-                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                        with open(product['image_path'], 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=product_text,
-                                parse_mode='HTML',
-                                reply_markup=get_product_detail_menu(product_id)
-                            )
-                        await query.message.delete()
-                        Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                        return
-                    else:
-                        logger.warning(f"Файл не знайдено: {product['image_path']}")
-                except Exception as e:
-                    logger.error(f"Помилка відправки фото з файлу: {e}")
-            
-            # Якщо немає файлу або помилка, пробуємо file_id
+            # Спочатку пробуємо відправити з file_id (Telegram зберігає фото на своїх серверах)
             if product and product.get('image_file_id'):
                 try:
                     logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
@@ -1344,8 +1317,49 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=get_product_detail_menu(product_id)
                     )
                     await query.message.delete()
+                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                    return
                 except Exception as e:
-                    logger.error(f"Помилка відправки фото з file_id: {e}")
+                    logger.error(f"❌ Помилка відправки фото з file_id: {e}")
+                    # Якщо file_id не працює, пробуємо з локального файлу
+                    if product.get('image_path'):
+                        try:
+                            if os.path.exists(product['image_path']):
+                                logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
+                                with open(product['image_path'], 'rb') as photo:
+                                    await context.bot.send_photo(
+                                        chat_id=chat_id,
+                                        photo=photo,
+                                        caption=product_text,
+                                        parse_mode='HTML',
+                                        reply_markup=get_product_detail_menu(product_id)
+                                    )
+                                await query.message.delete()
+                                return
+                            else:
+                                logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
+                        except Exception as e:
+                            logger.error(f"❌ Помилка відправки фото з файлу: {e}")
+            
+            # Якщо немає file_id, пробуємо з локального файлу
+            elif product and product.get('image_path'):
+                try:
+                    if os.path.exists(product['image_path']):
+                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
+                        with open(product['image_path'], 'rb') as photo:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo,
+                                caption=product_text,
+                                parse_mode='HTML',
+                                reply_markup=get_product_detail_menu(product_id)
+                            )
+                        await query.message.delete()
+                    else:
+                        logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
+                        await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+                except Exception as e:
+                    logger.error(f"❌ Помилка відправки фото з файлу: {e}")
                     await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             else:
                 await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
@@ -2032,4 +2046,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
