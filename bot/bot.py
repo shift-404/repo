@@ -1,18 +1,16 @@
 import os
 import json
+import re
 import logging
 import sys
-import csv
+import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
-from io import StringIO, BytesIO
 import asyncio
-import traceback
-import time
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, InputMediaPhoto
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,114 +20,43 @@ from telegram.ext import (
     ContextTypes
 )
 
-# Діагностика
-print("🚀 Бот запускається...")
-print(f"📂 Поточна папка: {os.getcwd()}")
-print(f"📄 Файли в папці: {os.listdir('.')}")
-
-# ВИПРАВЛЕНО: використовуємо BOT_TOKEN для основного бота
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    print("❌ ПОМИЛКА: BOT_TOKEN не знайдено!")
-    sys.exit(1)
-else:
-    print(f"✅ BOT_TOKEN знайдено: {TOKEN[:5]}...")
-
-# Для сповіщень адмінам використовуємо ADMIN_BOT_TOKEN
-ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
-if not ADMIN_BOT_TOKEN:
-    print("⚠️ ПОПЕРЕДЖЕННЯ: ADMIN_BOT_TOKEN не знайдено!")
-else:
-    print(f"✅ ADMIN_BOT_TOKEN знайдено: {ADMIN_BOT_TOKEN[:5]}...")
-
-# Перевіряємо DATABASE_URL
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    print("❌ ПОМИЛКА: DATABASE_URL не знайдено!")
-    sys.exit(1)
-else:
-    print("✅ DATABASE_URL знайдено")
-
-print("🔄 Спроба підключитися до бази даних...")
-try:
-    conn = psycopg2.connect(DATABASE_URL)
-    conn.close()
-    print("✅ Підключення до БД успішне")
-except Exception as e:
-    print(f"❌ Помилка підключення до БД: {e}")
-
-print("🚦 Бот готовий до запуску...")
-
 logging.basicConfig(
-    format='%(asctime)s - ADMIN - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
-KYIV_TZ = None
-try:
-    import pytz
-    KYIV_TZ = pytz.timezone('Europe/Kyiv')
-except ImportError:
-    logger.warning("Бібліотека pytz не встановлена, використовую UTC")
-    KYIV_TZ = None
-
-def get_kyiv_time():
-    if KYIV_TZ:
-        return datetime.now(KYIV_TZ)
-    return datetime.now()
-
-def format_kyiv_time(dt_str):
-    if not dt_str:
-        return "Н/Д"
-    try:
-        if isinstance(dt_str, datetime):
-            dt = dt_str
-        else:
-            dt = datetime.strptime(str(dt_str)[:19], '%Y-%m-%d %H:%M:%S')
-        if KYIV_TZ and dt.tzinfo is None:
-            try:
-                dt = pytz.UTC.localize(dt)
-                dt = dt.astimezone(KYIV_TZ)
-            except:
-                pass
-        return dt.strftime('%Y-%m-%d %H:%M:%S')
-    except:
-        return str(dt_str)[:16]
-
-TOKEN = os.getenv("ADMIN_BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
-    logger.error("ADMIN_BOT_TOKEN не знайдено!")
-    sys.exit(1)
-
-MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not MAIN_BOT_TOKEN:
     logger.error("BOT_TOKEN не знайдено!")
     sys.exit(1)
 
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
+ADMIN_BOT_TOKEN = os.getenv("ADMIN_BOT_TOKEN")
+if not ADMIN_BOT_TOKEN:
+    logger.error("ADMIN_BOT_TOKEN не знайдено!")
+    sys.exit(1)
+
+logger.info(f"✅ Токен основного бота отримано: {TOKEN[:4]}...{TOKEN[-4:]}")
+logger.info(f"✅ Токен адмін-бота отримано: {ADMIN_BOT_TOKEN[:4]}...{ADMIN_BOT_TOKEN[-4:]}")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
-# Тимчасова папка для завантаження (буде очищатися)
-TEMP_IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_images")
-os.makedirs(TEMP_IMAGE_DIR, exist_ok=True)
-print(f"📁 Тимчасова папка для зображень: {TEMP_IMAGE_DIR}")
+IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
+os.makedirs(IMAGE_DIR, exist_ok=True)
 
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except Exception as e:
-        logger.error(f"Помилка підключення до БД: {e}")
+        logger.error(f"❌ Помилка підключення до БД: {e}")
         return None
 
-def init_database_if_empty():
+def init_database():
     conn = get_db_connection()
     if not conn:
         return False
@@ -231,8 +158,8 @@ def init_database_if_empty():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
-                image_path TEXT,
                 image_file_id TEXT,
+                image_path TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -253,12 +180,12 @@ def init_database_if_empty():
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
         except:
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
         except:
             pass
         
@@ -282,102 +209,101 @@ def init_database_if_empty():
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_file_id, details)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_file_id, image_path, details)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
         
         conn.commit()
-        logger.info("Таблиці успішно створено/перевірено!")
+        logger.info("✅ База даних PostgreSQL ініціалізована")
         return True
     except Exception as e:
-        logger.error(f"Помилка створення таблиць: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Помилка ініціалізації бази даних: {e}")
         return False
     finally:
         conn.close()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
-os.makedirs(REPORTS_DIR, exist_ok=True)
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOGS_DIR, exist_ok=True)
 
-admin_sessions = {}
-last_password_check = {}
-orders_offset = {}
-messages_offset = {}
-broadcast_in_progress = {}
+ORDERS_LOG = os.path.join(LOGS_DIR, "orders.txt")
+USERS_LOG = os.path.join(LOGS_DIR, "users.txt")
+MESSAGES_LOG = os.path.join(LOGS_DIR, "messages.txt")
+QUICK_ORDERS_LOG = os.path.join(LOGS_DIR, "quick_orders.txt")
 
-def is_authenticated(user_id: int) -> bool:
-    return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
-
-async def download_telegram_file(file_id: str, bot: Bot) -> str:
-    """Тимчасово завантажує файл для отримання file_id (не для зберігання)"""
+def log_order(order_data: dict):
     try:
-        file = await bot.get_file(file_id)
-        file_path = os.path.join(TEMP_IMAGE_DIR, f"{file_id}.jpg")
-        await file.download_to_drive(file_path)
-        return file_path
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Місто: {order_data.get('city', 'Н/Д')}\n")
+            f.write(f"Відділення: {order_data.get('np_department', 'Н/Д')}\n")
+            f.write(f"Сума: {order_data.get('total', 0):.2f} грн\n")
+            f.write(f"Статус: {order_data.get('status', 'нове')}\n")
+            f.write(f"{'='*60}\n\n")
     except Exception as e:
-        logger.error(f"Помилка завантаження файлу: {e}")
-        return None
+        logger.error(f"Помилка запису замовлення: {e}")
 
-async def download_image_from_url(url: str) -> tuple:
-    """Завантажує зображення за URL і повертає тимчасовий шлях до файлу"""
-    logger.info(f"🌐 Спроба завантажити URL: {url}")
-    
+def log_user(user_data: dict):
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(url, timeout=30, allow_redirects=True, headers=headers)
-        response.raise_for_status()
-        
-        content_type = response.headers.get('content-type', '')
-        logger.info(f"📦 Отримано content-type: {content_type}")
-        
-        if not content_type.startswith('image/'):
-            # Перевіряємо сигнатуру файлу
-            if response.content[:4] in [b'\xff\xd8\xff\xe0', b'\xff\xd8\xff\xe1', b'\x89PNG', b'GIF8']:
-                logger.info("📸 Файл схожий на зображення за сигнатурою")
-            else:
-                logger.error(f"❌ URL не містить зображення: {content_type}")
-                return None, None
-        
-        filename = f"url_image_{int(time.time())}.jpg"
-        file_path = os.path.join(TEMP_IMAGE_DIR, filename)
-        
-        with open(file_path, 'wb') as f:
-            f.write(response.content)
-        
-        logger.info(f"✅ Зображення завантажено тимчасово: {file_path}")
-        return file_path, None
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(USERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{timestamp} | ID:{user_data.get('user_id')} | {user_data.get('first_name', '')} {user_data.get('last_name', '')} | @{user_data.get('username', '')}\n")
     except Exception as e:
-        logger.error(f"❌ Помилка завантаження зображення за URL {url}: {e}")
-        return None, None
+        logger.error(f"Помилка запису користувача: {e}")
 
-async def reset_all_orders():
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
+def log_message(msg_data: dict):
     try:
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM order_items")
-        cursor.execute("DELETE FROM orders")
-        cursor.execute("DELETE FROM quick_orders")
-        cursor.execute("DELETE FROM carts")
-        cursor.execute("DELETE FROM messages")
-        
-        conn.commit()
-        logger.info("Всі замовлення та повідомлення успішно видалено!")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(MESSAGES_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'─'*50}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Від: {msg_data.get('user_name', 'Н/Д')} (ID: {msg_data.get('user_id', 'Н/Д')})\n")
+            f.write(f"Username: @{msg_data.get('username', 'Н/Д')}\n")
+            f.write(f"Тип: {msg_data.get('message_type', 'Н/Д')}\n")
+            f.write(f"Текст: {msg_data.get('text', 'Н/Д')}\n")
+            f.write(f"{'─'*50}\n")
+    except Exception as e:
+        logger.error(f"Помилка запису повідомлення: {e}")
+
+def log_quick_order(order_data: dict):
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open(QUICK_ORDERS_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ШВИДКЕ ЗАМОВЛЕННЯ #{order_data.get('order_id', 'Н/Д')}\n")
+            f.write(f"Час: {timestamp}\n")
+            f.write(f"Клієнт: {order_data.get('user_name', 'Н/Д')}\n")
+            f.write(f"Телефон: {order_data.get('phone', 'Н/Д')}\n")
+            f.write(f"Username: @{order_data.get('username', 'Н/Д')}\n")
+            f.write(f"Продукт: {order_data.get('product_name', 'Н/Д')}\n")
+            f.write(f"Спосіб зв'язку: {order_data.get('contact_method', 'Н/Д')}\n")
+            f.write(f"Повідомлення: {order_data.get('message', '')}\n")
+            f.write(f"Статус: {order_data.get('status', 'нове')}\n")
+            f.write(f"{'='*60}\n\n")
+    except Exception as e:
+        logger.error(f"Помилка запису швидкого замовлення: {e}")
+
+def check_single_instance():
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', 9999))
+        sock.close()
+        if result == 0:
+            logger.error("⚠️ Другий екземпляр бота вже запущено!")
+            return False
         return True
     except Exception as e:
-        logger.error(f"Помилка видалення замовлень: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+        logger.error(f"⚠️ Помилка перевірки екземпляра: {e}")
+        return True
 
 async def notify_admins_about_new_order(order_data: dict):
     try:
@@ -418,14 +344,9 @@ async def notify_admins_about_new_order(order_data: dict):
             if items_text:
                 message += f"📦 <b>Товари:</b>\n{items_text}"
         
-        message += f"\n🕒 <b>Час:</b> {format_kyiv_time(order_data.get('created_at'))}"
+        message += f"\n🕒 <b>Час:</b> {order_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_{order_data.get('order_type', 'regular')}")],
-            [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_{order_data.get('order_type', 'regular')}")]
-        ])
-        
-        admin_bot = Bot(token=TOKEN)
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
@@ -433,8 +354,7 @@ async def notify_admins_about_new_order(order_data: dict):
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    parse_mode='HTML'
                 )
                 sent_count += 1
                 await asyncio.sleep(0.1)
@@ -445,7 +365,6 @@ async def notify_admins_about_new_order(order_data: dict):
         
     except Exception as e:
         logger.error(f"Помилка в notify_admins_about_new_order: {e}")
-        logger.error(traceback.format_exc())
 
 async def notify_admins_about_message(message_data: dict):
     try:
@@ -468,14 +387,9 @@ async def notify_admins_about_message(message_data: dict):
         message += f"📱 <b>Username:</b> @{message_data.get('username', 'Н/Д')}\n"
         message += f"🆔 <b>User ID:</b> {message_data.get('user_id', 'Н/Д')}\n"
         message += f"📝 <b>Текст:</b> {message_data.get('text', 'Н/Д')}\n"
-        message += f"🕒 <b>Час:</b> {format_kyiv_time(message_data.get('created_at'))}"
+        message += f"🕒 <b>Час:</b> {message_data.get('created_at', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))}"
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📝 Відповісти", callback_data=f"reply_user_{message_data.get('user_id')}")],
-            [InlineKeyboardButton("👤 Профіль клієнта", callback_data=f"customer_view_{message_data.get('user_id')}")]
-        ])
-        
-        admin_bot = Bot(token=TOKEN)
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
@@ -483,8 +397,7 @@ async def notify_admins_about_message(message_data: dict):
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    parse_mode='HTML'
                 )
                 sent_count += 1
                 await asyncio.sleep(0.1)
@@ -495,7 +408,6 @@ async def notify_admins_about_message(message_data: dict):
         
     except Exception as e:
         logger.error(f"Помилка в notify_admins_about_message: {e}")
-        logger.error(traceback.format_exc())
 
 async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
     try:
@@ -520,14 +432,9 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         message += f"📦 <b>Продукт:</b> {product_name}\n"
         message += f"💬 <b>Спосіб зв'язку:</b> chat\n"
         message += f"📝 <b>Повідомлення:</b> {message_text}\n"
-        message += f"🕒 <b>Час:</b> {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}"
+        message += f"🕒 <b>Час:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 Керувати замовленням", callback_data=f"order_view_{order_id}_quick")],
-            [InlineKeyboardButton("📝 Відповісти клієнту", callback_data=f"reply_order_{order_id}_quick")]
-        ])
-        
-        admin_bot = Bot(token=TOKEN)
+        admin_bot = Bot(token=ADMIN_BOT_TOKEN)
         
         sent_count = 0
         for admin in admins:
@@ -535,8 +442,7 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
                 await admin_bot.send_message(
                     chat_id=admin['user_id'],
                     text=message,
-                    parse_mode='HTML',
-                    reply_markup=keyboard
+                    parse_mode='HTML'
                 )
                 sent_count += 1
                 await asyncio.sleep(0.1)
@@ -547,780 +453,317 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         
     except Exception as e:
         logger.error(f"Помилка в send_combined_quick_order_notification: {e}")
-        logger.error(traceback.format_exc())
 
-def safe_get(order, key, default=0):
-    value = order.get(key)
-    if value is None:
-        return default
-    if isinstance(value, (int, float)):
-        return value
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 0):
-    conn = get_db_connection()
-    if not conn:
-        return []
+class Database:
     
-    try:
-        cursor = conn.cursor()
-        
-        query = '''
-            SELECT *, 'regular' as order_type FROM orders 
-            ORDER BY created_at DESC
-        '''
-        if limit:
-            query += f' LIMIT {limit} OFFSET {offset}'
-        
-        cursor.execute(query)
-        regular_orders = cursor.fetchall()
-        
-        all_orders = []
-        for row in regular_orders:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            
-            cursor.execute('''
-                SELECT * FROM order_items 
-                WHERE order_id = %s
-            ''', (order['order_id'],))
-            items = cursor.fetchall()
-            
-            order_items = []
-            for item in items:
-                item_dict = dict(item)
-                item_dict['created_at'] = format_kyiv_time(item_dict.get('created_at'))
-                order_items.append(item_dict)
-            
-            order['items'] = order_items
-            order['display_id'] = order['order_id']
-            all_orders.append(order)
-        
-        if include_quick:
-            query = '''
-                SELECT *, 'quick' as order_type FROM quick_orders 
-                ORDER BY created_at DESC
-            '''
-            if limit:
-                query += f' LIMIT {limit} OFFSET {offset}'
-            
-            cursor.execute(query)
-            quick_orders = cursor.fetchall()
-            
-            for row in quick_orders:
-                order = dict(row)
-                order['created_at'] = format_kyiv_time(order.get('created_at'))
-                order['order_id'] = order['id']
-                order['display_id'] = order['id']
-                order['total'] = safe_get(order, 'total', 0)
-                order['city'] = order.get('city', 'Н/Д')
-                order['np_department'] = order.get('np_department', 'Н/Д')
-                all_orders.append(order)
-        
-        all_orders.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        
-        return all_orders
-    except Exception as e:
-        logger.error(f"Помилка отримання замовлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_recent_orders(hours: int = 1, min_count: int = 3):
-    all_orders = get_all_orders(include_quick=True)
+    @staticmethod
+    def get_connection():
+        return get_db_connection()
     
-    kyiv_now = get_kyiv_time()
-    time_limit = kyiv_now - timedelta(hours=hours)
-    
-    recent_orders = []
-    for order in all_orders:
+    @staticmethod
+    def save_user(user_id: int, first_name: str = "", last_name: str = "", username: str = ""):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        
         try:
-            order_time_str = order.get('created_at', '')
-            if not order_time_str:
-                continue
-            order_time = datetime.strptime(str(order_time_str)[:19], '%Y-%m-%d %H:%M:%S')
-            if KYIV_TZ:
-                try:
-                    order_time = KYIV_TZ.localize(order_time)
-                except:
-                    pass
-            if order_time >= time_limit:
-                recent_orders.append(order)
-        except:
-            continue
-    
-    if len(recent_orders) < min_count:
-        additional = all_orders[:min_count]
-        for order in additional:
-            if order not in recent_orders:
-                recent_orders.append(order)
-    
-    return recent_orders[:min_count]
-
-def get_more_orders(user_id: int, count: int = 5):
-    if user_id not in orders_offset:
-        orders_offset[user_id] = 0
-    
-    offset = orders_offset[user_id]
-    orders = get_all_orders(include_quick=True, limit=count, offset=offset)
-    orders_offset[user_id] = offset + len(orders)
-    
-    return orders
-
-def format_order_text(order: dict) -> str:
-    order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
-    order_id = order.get('order_id', order.get('id', 'Н/Д'))
-    
-    user_name = order.get('user_name', 'Н/Д')
-    phone = order.get('phone', 'Н/Д')
-    total = safe_get(order, 'total', 0)
-    status = order.get('status', 'нове')
-    created_at = order.get('created_at', '')
-    
-    text = f"{order_type} <b>№{order_id}</b> | {created_at[:16] if created_at else 'Н/Д'}\n"
-    text += f"👤 Клієнт: {user_name}\n"
-    text += f"📞 Телефон: {phone}\n"
-    
-    if order.get('order_type') == 'quick':
-        product_name = order.get('product_name', 'Н/Д')
-        text += f"📦 Продукт: {product_name}\n"
-        if order.get('message'):
-            msg = order.get('message', '')
-            text += f"💬 Повідомлення: {msg[:50]}{'...' if len(msg) > 50 else ''}\n"
-        text += f"💰 Сума: {total:.2f} грн\n"
-    else:
-        text += f"💰 Сума: {total:.2f} грн\n"
-    
-    text += f"📊 Статус: {status}\n"
-    return text
-
-def get_orders_by_phone(phone: str):
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT *, 'regular' as order_type FROM orders 
-            WHERE phone LIKE %s 
-            ORDER BY created_at DESC
-        ''', (f"%{phone}%",))
-        regular_orders = cursor.fetchall()
-        
-        all_orders = []
-        for row in regular_orders:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['display_id'] = order['order_id']
-            all_orders.append(order)
-        
-        cursor.execute('''
-            SELECT *, 'quick' as order_type FROM quick_orders 
-            WHERE phone LIKE %s 
-            ORDER BY created_at DESC
-        ''', (f"%{phone}%",))
-        quick_orders = cursor.fetchall()
-        
-        for row in quick_orders:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['order_id'] = order['id']
-            order['display_id'] = order['id']
-            order['total'] = safe_get(order, 'total', 0)
-            all_orders.append(order)
-        
-        return all_orders
-    except Exception as e:
-        logger.error(f"Помилка отримання замовлень за телефоном: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_new_orders():
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT *, 'regular' as order_type FROM orders 
-            WHERE status = 'нове'
-            ORDER BY created_at DESC
-        ''')
-        rows = cursor.fetchall()
-        
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['display_id'] = order['order_id']
-            orders.append(order)
-        
-        return orders
-    except Exception as e:
-        logger.error(f"Помилка отримання нових замовлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_quick_orders():
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM quick_orders 
-            ORDER BY created_at DESC
-        ''')
-        rows = cursor.fetchall()
-        
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['order_id'] = order['id']
-            order['display_id'] = order['id']
-            order['total'] = safe_get(order, 'total', 0)
-            orders.append(order)
-        
-        return orders
-    except Exception as e:
-        logger.error(f"Помилка отримання швидких замовлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def update_order_status(order_id: int, status: str, order_type: str = 'regular'):
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        
-        if order_type == 'regular' or order_type == 'orders':
+            cursor = conn.cursor()
             cursor.execute('''
-                UPDATE orders SET status = %s WHERE order_id = %s
-            ''', (status, order_id))
-        else:
-            cursor.execute('''
-                UPDATE quick_orders SET status = %s WHERE id = %s
-            ''', (status, order_id))
-        
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка оновлення статусу: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
-
-def get_order_by_id(order_id: int, order_type: str = 'regular'):
-    conn = get_db_connection()
-    if not conn:
-        return None
+                INSERT INTO users (user_id, first_name, last_name, username)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    first_name = EXCLUDED.first_name,
+                    last_name = EXCLUDED.last_name,
+                    username = EXCLUDED.username
+            ''', (user_id, first_name, last_name, username))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка збереження користувача: {e}")
+        finally:
+            conn.close()
     
-    try:
-        cursor = conn.cursor()
+    @staticmethod
+    def get_user_session(user_id: int) -> Dict:
+        conn = Database.get_connection()
+        if not conn:
+            return {"state": "", "temp_data": {}, "last_section": "main_menu"}
         
-        if order_type == 'regular' or order_type == 'orders':
-            cursor.execute('SELECT * FROM orders WHERE order_id = %s', (order_id,))
-            order_row = cursor.fetchone()
-            if not order_row:
-                return None
-            
-            order = dict(order_row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            
-            cursor.execute('SELECT * FROM order_items WHERE order_id = %s', (order_id,))
-            items = cursor.fetchall()
-            
-            order_items = []
-            for item in items:
-                item_dict = dict(item)
-                item_dict['created_at'] = format_kyiv_time(item_dict.get('created_at'))
-                order_items.append(item_dict)
-            
-            order['items'] = order_items
-            order['order_type'] = 'regular'
-        else:
-            cursor.execute('SELECT * FROM quick_orders WHERE id = %s', (order_id,))
-            order_row = cursor.fetchone()
-            if not order_row:
-                return None
-            
-            order = dict(order_row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['order_id'] = order['id']
-            order['order_type'] = 'quick'
-            order['items'] = []
-            order['total'] = safe_get(order, 'total', 0)
-        
-        return order
-    except Exception as e:
-        logger.error(f"Помилка отримання замовлення: {e}")
-        logger.error(traceback.format_exc())
-        return None
-    finally:
-        conn.close()
-
-async def notify_customer_about_status(user_id: int, order_id: int, status: str):
-    try:
-        status_messages = {
-            "підтверджено": "✅ Ваше замовлення підтверджено! Ми розпочали його обробку.",
-            "упаковано": "📦 Ваше замовлення упаковано та готове до відправки!",
-            "відправлено": "🚚 Ваше замовлення відправлено! Очікуйте на повідомлення про прибуття.",
-            "прибуло": "📍 Ваше замовлення прибуло у відділення Нової Пошти! Не забудьте отримати його.",
-            "скасовано": "❌ На жаль, ваше замовлення було скасовано. Зв'яжіться з нами для деталей."
-        }
-        
-        message = status_messages.get(status, f"📊 Статус вашого замовлення змінено на: {status}")
-        
-        main_bot = Bot(token=MAIN_BOT_TOKEN)
-        
-        await main_bot.send_message(
-            chat_id=user_id,
-            text=f"<b>Замовлення №{order_id}</b>\n\n{message}",
-            parse_mode='HTML'
-        )
-        logger.info(f"Сповіщення про статус #{order_id} відправлено клієнту {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"Помилка відправки сповіщення клієнту {user_id}: {e}")
-        return False
-
-def get_all_messages(limit: int = 50, offset: int = 0):
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM messages 
-            ORDER BY created_at DESC 
-            LIMIT %s OFFSET %s
-        ''', (limit, offset))
-        rows = cursor.fetchall()
-        
-        messages = []
-        for row in rows:
-            msg = dict(row)
-            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
-            messages.append(msg)
-        
-        return messages
-    except Exception as e:
-        logger.error(f"Помилка отримання повідомлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_message_by_id(message_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM messages WHERE id = %s', (message_id,))
-        row = cursor.fetchone()
-        if row:
-            msg = dict(row)
-            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
-            return msg
-        return None
-    except Exception as e:
-        logger.error(f"Помилка отримання повідомлення: {e}")
-        logger.error(traceback.format_exc())
-        return None
-    finally:
-        conn.close()
-
-def get_recent_messages(hours: int = 24, min_count: int = 5):
-    all_messages = get_all_messages(limit=100)
-    
-    kyiv_now = get_kyiv_time()
-    time_limit = kyiv_now - timedelta(hours=hours)
-    
-    recent_messages = []
-    for msg in all_messages:
         try:
-            msg_time_str = msg.get('created_at', '')
-            if not msg_time_str:
-                continue
-            msg_time = datetime.strptime(str(msg_time_str)[:19], '%Y-%m-%d %H:%M:%S')
-            if KYIV_TZ:
-                try:
-                    msg_time = KYIV_TZ.localize(msg_time)
-                except:
-                    pass
-            if msg_time >= time_limit:
-                recent_messages.append(msg)
-        except:
-            continue
-    
-    if len(recent_messages) < min_count:
-        additional = all_messages[:min_count]
-        for msg in additional:
-            if msg not in recent_messages:
-                recent_messages.append(msg)
-    
-    return recent_messages[:min_count]
-
-def get_more_messages(user_id: int, count: int = 5):
-    if user_id not in messages_offset:
-        messages_offset[user_id] = 0
-    
-    offset = messages_offset[user_id]
-    messages = get_all_messages(limit=count, offset=offset)
-    messages_offset[user_id] = offset + len(messages)
-    
-    return messages
-
-def format_message_text(msg: dict) -> str:
-    text = f"💬 <b>Повідомлення #{msg['id']}</b>\n\n"
-    text += f"👤 <b>Клієнт:</b> {msg['user_name']}\n"
-    text += f"📱 <b>Username:</b> @{msg['username']}\n"
-    text += f"🆔 <b>ID:</b> {msg['user_id']}\n"
-    text += f"📅 <b>Час:</b> {msg['created_at'][:16]}\n"
-    text += f"📝 <b>Тип:</b> {msg['message_type']}\n"
-    text += f"💬 <b>Текст:</b> {msg['text']}\n"
-    return text
-
-def get_messages_by_user(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM messages 
-            WHERE user_id = %s 
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        rows = cursor.fetchall()
-        
-        messages = []
-        for row in rows:
-            msg = dict(row)
-            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
-            messages.append(msg)
-        
-        return messages
-    except Exception as e:
-        logger.error(f"Помилка отримання повідомлень користувача: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def format_messages_text(messages: list) -> str:
-    if not messages:
-        return "💬 Повідомлень поки немає"
-    
-    text = "💬 <b>ОСТАННІ ПОВІДОМЛЕННЯ</b>\n\n"
-    for i, msg in enumerate(messages[:20], 1):
-        text += f"<b>{i}. {msg['user_name']}</b> (@{msg['username']})\n"
-        text += f"📅 {msg['created_at'][:16]}\n"
-        text += f"📝 {msg['text'][:100]}{'...' if len(msg['text']) > 100 else ''}\n"
-        text += f"🆔 ID: {msg['user_id']}\n"
-        text += f"📋 Тип: {msg['message_type']}\n"
-        text += f"{'─'*40}\n"
-    
-    if len(messages) > 20:
-        text += f"... та ще {len(messages) - 20} повідомлень"
-    
-    return text
-
-def generate_messages_file(messages: list) -> bytes:
-    output = StringIO()
-    output.write("ПОВІДОМЛЕННЯ ВІД КОРИСТУВАЧІВ\n")
-    output.write("=" * 80 + "\n")
-    output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    output.write(f"Всього повідомлень: {len(messages)}\n")
-    output.write("=" * 80 + "\n\n")
-    
-    for i, msg in enumerate(messages, 1):
-        output.write(f"{i}. {msg['user_name']} (@{msg['username']})\n")
-        output.write(f"ID: {msg['user_id']}\n")
-        output.write(f"Дата: {msg['created_at']}\n")
-        output.write(f"Тип: {msg['message_type']}\n")
-        output.write(f"Текст: {msg['text']}\n")
-        output.write("-" * 40 + "\n")
-    
-    return output.getvalue().encode('utf-8')
-
-def get_all_users():
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM users 
-            ORDER BY created_at DESC
-        ''')
-        rows = cursor.fetchall()
-        
-        users = []
-        for row in rows:
-            user = dict(row)
-            user['created_at'] = format_kyiv_time(user.get('created_at'))
-            users.append(user)
-        
-        return users
-    except Exception as e:
-        logger.error(f"Помилка отримання користувачів: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_user_by_phone(phone: str):
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT user_id, user_name, username FROM orders 
-            WHERE phone LIKE %s 
-            ORDER BY created_at DESC LIMIT 1
-        ''', (f"%{phone}%",))
-        order_user = cursor.fetchone()
-        
-        if order_user:
-            user_id = order_user['user_id']
-            cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-            user_row = cursor.fetchone()
-            if user_row:
-                user = dict(user_row)
-                user['created_at'] = format_kyiv_time(user.get('created_at'))
-                return user
-        
-        return None
-    except Exception as e:
-        logger.error(f"Помилка отримання користувача за телефоном: {e}")
-        logger.error(traceback.format_exc())
-        return None
-    finally:
-        conn.close()
-
-def get_user_by_id(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE user_id = %s', (user_id,))
-        row = cursor.fetchone()
-        if row:
-            user = dict(row)
-            user['created_at'] = format_kyiv_time(user.get('created_at'))
-            return user
-        return None
-    except Exception as e:
-        logger.error(f"Помилка отримання користувача: {e}")
-        logger.error(traceback.format_exc())
-        return None
-    finally:
-        conn.close()
-
-def get_user_orders(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT *, 'regular' as order_type FROM orders 
-            WHERE user_id = %s 
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        rows = cursor.fetchall()
-        
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            
+            cursor = conn.cursor()
             cursor.execute('''
-                SELECT * FROM order_items 
-                WHERE order_id = %s
-            ''', (order['order_id'],))
-            items = cursor.fetchall()
+                SELECT state, temp_data, last_section 
+                FROM user_sessions 
+                WHERE user_id = %s
+            ''', (user_id,))
             
-            order_items = []
-            for item in items:
-                item_dict = dict(item)
-                item_dict['created_at'] = format_kyiv_time(item_dict.get('created_at'))
-                order_items.append(item_dict)
+            row = cursor.fetchone()
+            if row:
+                state, temp_data_json, last_section = row['state'], row['temp_data'], row['last_section']
+                temp_data = json.loads(temp_data_json) if temp_data_json else {}
+                return {"state": state, "temp_data": temp_data, "last_section": last_section}
+            return {"state": "", "temp_data": {}, "last_section": "main_menu"}
+        except Exception as e:
+            logger.error(f"Помилка отримання сесії: {e}")
+            return {"state": "", "temp_data": {}, "last_section": "main_menu"}
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def save_user_session(user_id: int, state: str = "", temp_data: Dict = None, last_section: str = ""):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        
+        try:
+            temp_data_json = json.dumps(temp_data) if temp_data else "{}"
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_sessions (user_id, state, temp_data, last_section, updated_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id) DO UPDATE SET
+                    state = EXCLUDED.state,
+                    temp_data = EXCLUDED.temp_data,
+                    last_section = EXCLUDED.last_section,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (user_id, state, temp_data_json, last_section))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка збереження сесії: {e}")
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def clear_user_session(user_id: int):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_sessions WHERE user_id = %s', (user_id,))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка очищення сесії: {e}")
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def add_to_cart(user_id: int, product_id: int, quantity: float) -> bool:
+        conn = Database.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, quantity FROM carts 
+                WHERE user_id = %s AND product_id = %s
+            ''', (user_id, product_id))
             
-            order['items'] = order_items
-            order['display_id'] = order['order_id']
-            orders.append(order)
-        
-        return orders
-    except Exception as e:
-        logger.error(f"Помилка отримання замовлень користувача: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_user_phones(user_id: int) -> list:
-    conn = get_db_connection()
-    if not conn:
-        return []
+            existing = cursor.fetchone()
+            
+            if existing:
+                cart_id, old_quantity = existing['id'], existing['quantity']
+                new_quantity = old_quantity + quantity
+                cursor.execute('''
+                    UPDATE carts SET quantity = %s, added_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                ''', (new_quantity, cart_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO carts (user_id, product_id, quantity)
+                    VALUES (%s, %s, %s)
+                ''', (user_id, product_id, quantity))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Помилка додавання в корзину: {e}")
+            return False
+        finally:
+            conn.close()
     
-    try:
-        cursor = conn.cursor()
+    @staticmethod
+    def get_cart_items(user_id: int) -> List[Dict]:
+        conn = Database.get_connection()
+        if not conn:
+            return []
         
-        phones = []
-        
-        cursor.execute('''
-            SELECT DISTINCT phone FROM orders 
-            WHERE user_id = %s AND phone IS NOT NULL AND phone != ''
-        ''', (user_id,))
-        order_phones = cursor.fetchall()
-        for row in order_phones:
-            if row['phone'] and row['phone'] not in phones:
-                phones.append(row['phone'])
-        
-        cursor.execute('''
-            SELECT DISTINCT phone FROM quick_orders 
-            WHERE user_id = %s AND phone IS NOT NULL AND phone != ''
-        ''', (user_id,))
-        quick_phones = cursor.fetchall()
-        for row in quick_phones:
-            if row['phone'] and row['phone'] not in phones:
-                phones.append(row['phone'])
-        
-        return phones
-    except Exception as e:
-        logger.error(f"Помилка отримання телефонів користувача: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_user_messages(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, product_id, quantity FROM carts WHERE user_id = %s', (user_id,))
+            rows = cursor.fetchall()
+            
+            items = []
+            for row in rows:
+                cart_id, product_id, quantity = row['id'], row['product_id'], row['quantity']
+                product = Database.get_product_by_id(product_id)
+                if product:
+                    items.append({
+                        "cart_id": cart_id,
+                        "product": product,
+                        "quantity": quantity
+                    })
+            return items
+        except Exception as e:
+            logger.error(f"Помилка отримання корзини: {e}")
+            return []
+        finally:
+            conn.close()
     
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM messages 
-            WHERE user_id = %s 
-            ORDER BY created_at DESC LIMIT 10
-        ''', (user_id,))
-        rows = cursor.fetchall()
-        
-        messages = []
-        for row in rows:
-            msg = dict(row)
-            msg['created_at'] = format_kyiv_time(msg.get('created_at'))
-            messages.append(msg)
-        
-        return messages
-    except Exception as e:
-        logger.error(f"Помилка отримання повідомлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_user_quick_orders(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return []
+    @staticmethod
+    def clear_cart(user_id: int):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM carts WHERE user_id = %s', (user_id,))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка очищення корзини: {e}")
+        finally:
+            conn.close()
     
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM quick_orders 
-            WHERE user_id = %s 
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        rows = cursor.fetchall()
+    @staticmethod
+    def remove_from_cart(cart_id: int):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM carts WHERE id = %s', (cart_id,))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка видалення з корзини: {e}")
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def create_order(order_data: Dict) -> int:
+        conn = Database.get_connection()
+        if not conn:
+            return 0
         
-        orders = []
-        for row in rows:
-            order = dict(row)
-            order['created_at'] = format_kyiv_time(order.get('created_at'))
-            order['order_id'] = order['id']
-            order['total'] = safe_get(order, 'total', 0)
-            orders.append(order)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO orders (user_id, user_name, username, phone, city, np_department, total, order_type, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING order_id
+            ''', (
+                order_data.get("user_id"),
+                order_data.get("user_name"),
+                order_data.get("username"),
+                order_data.get("phone"),
+                order_data.get("city"),
+                order_data.get("np_department"),
+                order_data.get("total"),
+                order_data.get("order_type"),
+                "нове"
+            ))
+            
+            result = cursor.fetchone()
+            order_id = result['order_id'] if result else 0
+            
+            for item in order_data.get("items", []):
+                cursor.execute('''
+                    INSERT INTO order_items (order_id, product_name, quantity, price_per_unit)
+                    VALUES (%s, %s, %s, %s)
+                ''', (order_id, item.get("product_name"), item.get("quantity"), item.get("price")))
+            
+            cursor.execute('DELETE FROM carts WHERE user_id = %s', (order_data.get("user_id"),))
+            conn.commit()
+            logger.info(f"✅ Замовлення #{order_id} створено успішно")
+            return order_id
+        except Exception as e:
+            logger.error(f"Помилка створення замовлення: {e}")
+            return 0
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def save_message(user_id: int, user_name: str, username: str, text: str, message_type: str):
+        conn = Database.get_connection()
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO messages (user_id, user_name, username, text, message_type)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (user_id, user_name, username, text, message_type))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Помилка збереження повідомлення: {e}")
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def save_quick_order(user_id: int, user_name: str, username: str, product_id: int, 
+                        product_name: str, quantity: float, phone: str = None, 
+                        contact_method: str = "chat", message: str = None) -> int:
+        conn = Database.get_connection()
+        if not conn:
+            return 0
         
-        return orders
-    except Exception as e:
-        logger.error(f"Помилка отримання швидких замовлень: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
-
-def get_customer_segment(user_data: dict, orders: list) -> str:
-    if not orders:
-        return "🆕 Новий клієнт (без замовлень)"
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO quick_orders (user_id, user_name, username, product_id, product_name, 
+                                        quantity, phone, contact_method, message, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (user_id, user_name, username, product_id, product_name, quantity, phone, contact_method, message, "нове"))
+            
+            result = cursor.fetchone()
+            order_id = result['id'] if result else 0
+            conn.commit()
+            logger.info(f"✅ Швидке замовлення #{order_id} збережено")
+            return order_id
+        except Exception as e:
+            logger.error(f"Помилка збереження швидкого замовлення: {e}")
+            return 0
+        finally:
+            conn.close()
     
-    total_orders = len(orders)
-    total_spent = sum(order.get('total', 0) for order in orders)
+    @staticmethod
+    def get_statistics() -> Dict:
+        conn = Database.get_connection()
+        if not conn:
+            return {}
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM orders")
+            total_orders = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) FROM messages")
+            total_messages = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM users")
+            total_users = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM carts")
+            active_carts = cursor.fetchone()['count']
+            cursor.execute("SELECT COUNT(*) FROM quick_orders")
+            quick_orders = cursor.fetchone()['count']
+            cursor.execute("SELECT SUM(total) FROM orders")
+            total_revenue = cursor.fetchone()['sum'] or 0
+            
+            return {
+                "total_orders": total_orders,
+                "total_messages": total_messages,
+                "total_users": total_users,
+                "active_carts": active_carts,
+                "quick_orders": quick_orders,
+                "total_revenue": total_revenue
+            }
+        except Exception as e:
+            logger.error(f"Помилка отримання статистики: {e}")
+            return {}
+        finally:
+            conn.close()
     
-    if orders:
-        last_order = max(orders, key=lambda x: x.get('created_at', ''))
-        last_order_date_str = last_order.get('created_at', '')
-        if last_order_date_str:
-            try:
-                last_order_date = datetime.strptime(str(last_order_date_str)[:19], '%Y-%m-%d %H:%M:%S')
-                if KYIV_TZ:
-                    try:
-                        last_order_date = KYIV_TZ.localize(last_order_date)
-                    except:
-                        pass
-                days_since_last = (get_kyiv_time() - last_order_date).days
-            except:
-                days_since_last = 999
-        else:
-            days_since_last = 999
-    else:
-        days_since_last = 999
-    
-    if total_orders >= 5 and total_spent >= 5000:
-        return "👑 VIP клієнт"
-    elif total_orders >= 3:
-        return "⭐ Постійний клієнт"
-    elif days_since_last > 90:
-        return "💤 Неактивний клієнт"
-    elif total_orders == 1:
-        return "🆕 Новий клієнт (1 замовлення)"
-    else:
-        return "📊 Активний клієнт"
-
+@staticmethod
 def get_all_products():
-    conn = get_db_connection()
+    conn = Database.get_connection()
     if not conn:
         return []
     
@@ -1331,534 +774,128 @@ def get_all_products():
         
         products = []
         for row in rows:
-            product = dict(row)
-            if product.get('created_at'):
-                product['created_at'] = format_kyiv_time(product.get('created_at'))
+            product = {
+                "id": row['id'],
+                "name": row['name'],
+                "price": row['price'],
+                "category": row['category'],
+                "description": row['description'],
+                "unit": row['unit'],
+                "image": row['image'],
+                "image_file_id": row.get('image_file_id'),
+                "image_path": row.get('image_path'),
+                "details": row['details']
+            }
+            # ДОДАЙТЕ ЦЕ ЛОГУВАННЯ
+            if product['image_path']:
+                logger.info(f"📸 Товар ID={product['id']} має image_path={product['image_path']}")
+                # Перевіряємо чи файл існує
+                if os.path.exists(product['image_path']):
+                    logger.info(f"✅ Файл існує, розмір: {os.path.getsize(product['image_path'])} байт")
+                else:
+                    logger.error(f"❌ Файл НЕ існує: {product['image_path']}")
+            
             products.append(product)
         return products
     except Exception as e:
         logger.error(f"Помилка отримання товарів: {e}")
-        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
+    
+    @staticmethod
+    def get_product_by_id(product_id: int):
+        products = Database.get_all_products()
+        for product in products:
+            if product["id"] == product_id:
+                return product
+        return None
+    
+    @staticmethod
+    def get_user_orders(user_id: int) -> List[Dict]:
+        conn = Database.get_connection()
+        if not conn:
+            return []
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM orders 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC
+            ''', (user_id,))
+            rows = cursor.fetchall()
+            
+            orders = []
+            for row in rows:
+                order = dict(row)
+                created_at = order.get('created_at')
+                if created_at and hasattr(created_at, 'strftime'):
+                    created_at_str = created_at.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    created_at_str = str(created_at) if created_at else 'Н/Д'
+                
+                orders.append({
+                    "order_id": order['order_id'],
+                    "user_id": order['user_id'],
+                    "user_name": order['user_name'],
+                    "username": order['username'],
+                    "phone": order['phone'],
+                    "city": order['city'],
+                    "np_department": order['np_department'],
+                    "total": order['total'],
+                    "status": order['status'],
+                    "order_type": order['order_type'],
+                    "created_at": created_at_str
+                })
+            return orders
+        except Exception as e:
+            logger.error(f"Помилка отримання замовлень користувача: {e}")
+            return []
+        finally:
+            conn.close()
 
 def get_product_by_id(product_id: int):
-    logger.info(f"🔍 get_product_by_id викликано з ID: {product_id}")
-    products = get_all_products()
-    logger.info(f"📦 Отримано товарів з БД: {len(products)}")
+    products = Database.get_all_products()
     for product in products:
         if product["id"] == product_id:
-            logger.info(f"✅ Знайдено товар: {product['name']}")
             return product
-    logger.warning(f"❌ Товар з ID {product_id} не знайдено в БД")
     return None
 
-def update_product(product_id: int, **kwargs):
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        fields = []
-        values = []
-        for key, value in kwargs.items():
-            if value is not None:
-                fields.append(f"{key} = %s")
-                values.append(value)
-            else:
-                fields.append(f"{key} = NULL")
-        
-        if not fields:
-            logger.warning(f"Спроба оновити товар #{product_id} без даних")
-            return False
-        
-        values.append(product_id)
-        query = f"UPDATE products SET {', '.join(fields)} WHERE id = %s"
-        cursor.execute(query, values)
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка оновлення товару: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+def get_products_from_db():
+    return Database.get_all_products()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_path: str, image_file_id: str, details: str):
-    logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
-    
-    conn = get_db_connection()
-    if not conn:
-        logger.error("Не вдалося підключитись до БД")
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, image_path, image_file_id, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        ''', (name, price, category, description, unit, image, image_path, image_file_id, details))
-        
-        result = cursor.fetchone()
-        product_id = result['id'] if result else None
-        conn.commit()
-        
-        logger.info(f"Товар додано з ID: {product_id}")
-        return product_id
-    except Exception as e:
-        logger.error(f"Помилка додавання товару: {e}")
-        logger.error(traceback.format_exc())
-        return None
-    finally:
-        conn.close()
-        
-def delete_product(product_id: int):
-    product = get_product_by_id(product_id)
-    if product and product.get('image_path'):
-        try:
-            if os.path.exists(product['image_path']):
-                os.remove(product['image_path'])
-                logger.info(f"Видалено файл зображення: {product['image_path']}")
-        except Exception as e:
-            logger.error(f"Помилка видалення файлу зображення: {e}")
-    
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM products WHERE id = %s', (product_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка видалення товару: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+PRODUCTS = get_products_from_db()
 
-def get_all_admins():
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, username, added_by, added_at FROM admins')
-        rows = cursor.fetchall()
-        admins = []
-        for row in rows:
-            admin = dict(row)
-            if admin.get('added_at'):
-                admin['added_at'] = format_kyiv_time(admin.get('added_at'))
-            admins.append(admin)
-        return admins
-    except Exception as e:
-        logger.error(f"Помилка отримання адмінів: {e}")
-        logger.error(traceback.format_exc())
-        return []
-    finally:
-        conn.close()
+def refresh_products():
+    global PRODUCTS
+    PRODUCTS = get_products_from_db()
+    logger.info(f"🔄 Оновлено товари: {len(PRODUCTS)} позицій")
 
-def add_admin(user_id: int, username: str = "", added_by: int = 0):
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO admins (user_id, username, added_by)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET
-                username = EXCLUDED.username,
-                added_by = EXCLUDED.added_by
-        ''', (user_id, username, added_by))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка додавання адміна: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+refresh_products()
 
-def remove_admin(user_id: int):
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM admins WHERE user_id = %s', (user_id,))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Помилка видалення адміна: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+FAQS = [
+    {
+        "question": "Які способи оплати ви приймаєте?",
+        "answer": "✅ Готівка при отриманні\n✅ Переказ на карту ПриватБанку\n✅ Оплата через LiqPay"
+    },
+    {
+        "question": "Які терміни доставки?",
+        "answer": "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів"
+    }
+]
 
-def is_admin(user_id: int) -> bool:
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
-        count = cursor.fetchone()['count']
-        return count > 0
-    except Exception as e:
-        logger.error(f"Помилка перевірки адміна: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
-
-def generate_orders_report(orders: list, format: str = "txt"):
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО ЗАМОВЛЕННЯХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього замовлень: {len(orders)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for order in orders:
-            order_id = order.get('order_id', order.get('id', 'Н/Д'))
-            output.write(f"Номер: {order_id}\n")
-            output.write(f"Дата: {order['created_at']}\n")
-            output.write(f"Клієнт: {order.get('user_name', 'Н/Д')}\n")
-            output.write(f"Телефон: {order.get('phone', 'Н/Д')}\n")
-            output.write(f"Username: @{order.get('username', 'Н/Д')}\n")
-            output.write(f"Сума: {order.get('total', 0):.2f} грн\n")
-            output.write(f"Статус: {order.get('status', 'нове')}\n")
-            output.write(f"Тип: {order.get('order_type', 'regular')}\n")
-            if order.get('order_type') == 'quick' and order.get('message'):
-                output.write(f"Повідомлення: {order.get('message')}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
-    
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Сума', 'Статус', 'Тип', 'Повідомлення'])
-        
-        for order in orders:
-            order_id = order.get('order_id', order.get('id', 'Н/Д'))
-            writer.writerow([
-                order_id,
-                order['created_at'],
-                order.get('user_name', 'Н/Д'),
-                order.get('phone', 'Н/Д'),
-                order.get('username', 'Н/Д'),
-                f"{order.get('total', 0):.2f}",
-                order.get('status', 'нове'),
-                order.get('order_type', 'regular'),
-                order.get('message', '')
-            ])
-        
-        return output.getvalue().encode('utf-8-sig')
-
-def generate_users_report(users: list) -> bytes:
-    output = StringIO()
-    output.write("ЗВІТ ПО КОРИСТУВАЧАХ\n")
-    output.write("=" * 100 + "\n")
-    output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    output.write(f"Всього користувачів: {len(users)}\n")
-    output.write("=" * 100 + "\n\n")
-    
-    for user in users:
-        user_id = user['user_id']
-        orders = get_user_orders(user_id)
-        quick_orders = get_user_quick_orders(user_id)
-        messages = get_user_messages(user_id)
-        all_orders = orders + quick_orders
-        phones = get_user_phones(user_id)
-        
-        segment = get_customer_segment(user, all_orders)
-        
-        output.write(f"ID: {user_id}\n")
-        output.write(f"Ім'я: {user['first_name']} {user['last_name']}\n")
-        output.write(f"Username: @{user['username']}\n")
-        output.write(f"Дата реєстрації: {user['created_at'][:16]}\n")
-        output.write(f"Сегмент: {segment}\n\n")
-        
-        if phones:
-            output.write("📞 ТЕЛЕФОНИ:\n")
-            for i, phone in enumerate(phones, 1):
-                output.write(f"  {i}. {phone}\n")
-            output.write("\n")
-        
-        output.write("📦 ЗАМОВЛЕННЯ:\n")
-        output.write(f"  Всього замовлень: {len(all_orders)}\n")
-        
-        if all_orders:
-            total_spent = sum(o.get('total', 0) for o in orders)
-            output.write(f"  Загальна сума: {total_spent:.2f} грн\n")
-            if orders:
-                output.write(f"  Середній чек: {total_spent/len(orders):.2f} грн\n")
-            output.write("\n")
-            
-            output.write("  Останні замовлення:\n")
-            for i, order in enumerate(all_orders[:3], 1):
-                order_id = order.get('order_id', order.get('id', 'Н/Д'))
-                order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
-                created_at = order.get('created_at', '')[:16]
-                status = order.get('status', 'нове')
-                total = order.get('total', 0)
-                phone = order.get('phone', '')
-                output.write(f"    {i}. {order_type} №{order_id} | {created_at} | {total:.2f} грн | {status}\n")
-                if phone:
-                    output.write(f"       Телефон: {phone}\n")
-                if order.get('order_type') == 'quick' and order.get('message'):
-                    output.write(f"       Повідомлення: {order.get('message')[:100]}\n")
-                elif order.get('order_type') == 'regular' and order.get('items'):
-                    output.write(f"       Товари:\n")
-                    for item in order.get('items', [])[:2]:
-                        output.write(f"         • {item['product_name']} x{item['quantity']} = {item['price_per_unit'] * item['quantity']:.2f} грн\n")
-                    if len(order.get('items', [])) > 2:
-                        output.write(f"         ... та ще {len(order.get('items', [])) - 2} товарів\n")
-        else:
-            output.write("  Замовлень немає\n")
-        
-        if messages:
-            output.write(f"\n💬 ПОВІДОМЛЕННЯ: {len(messages)}\n")
-            output.write("  Останні повідомлення:\n")
-            for i, msg in enumerate(messages[:3], 1):
-                created_at = msg.get('created_at', '')[:16]
-                text = msg.get('text', '')
-                output.write(f"    {i}. {created_at}: {text[:100]}{'...' if len(text) > 100 else ''}\n")
-        
-        output.write("-" * 100 + "\n\n")
-    
-    return output.getvalue().encode('utf-8')
-
-def generate_quick_orders_report(orders: list, format: str = "txt"):
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО ШВИДКИХ ЗАМОВЛЕННЯХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього замовлень: {len(orders)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for order in orders:
-            output.write(f"Номер: {order['id']}\n")
-            output.write(f"Дата: {order['created_at']}\n")
-            output.write(f"Клієнт: {order['user_name']}\n")
-            output.write(f"Телефон: {order['phone']}\n")
-            output.write(f"Username: @{order['username']}\n")
-            output.write(f"Продукт: {order['product_name']}\n")
-            output.write(f"Спосіб зв'язку: {order['contact_method']}\n")
-            if order.get('message'):
-                output.write(f"Повідомлення: {order['message']}\n")
-            output.write(f"Статус: {order['status']}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
-    
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['Номер', 'Дата', 'Клієнт', 'Телефон', 'Username', 'Продукт', 'Спосіб зв`язку', 'Повідомлення', 'Статус'])
-        
-        for order in orders:
-            writer.writerow([
-                order['id'],
-                order['created_at'],
-                order['user_name'],
-                order['phone'],
-                order['username'],
-                order['product_name'],
-                order['contact_method'],
-                order.get('message', ''),
-                order['status']
-            ])
-        
-        return output.getvalue().encode('utf-8-sig')
-
-def generate_stats_report(stats: dict, format: str = "txt"):
-    if format == "txt":
-        output = StringIO()
-        output.write("СТАТИСТИКА\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        output.write(f"📋 Замовлень: {stats.get('total_orders', 0)}\n")
-        output.write(f"💰 Виручка: {stats.get('total_revenue', 0):.2f} грн\n")
-        output.write(f"💳 Середній чек: {stats.get('avg_check', 0):.2f} грн\n")
-        output.write(f"👥 Клієнтів: {stats.get('total_users', 0)}\n")
-        output.write(f"⚡ Швидких замовлень: {stats.get('total_quick_orders', 0)}\n")
-        output.write(f"💬 Повідомлень: {stats.get('total_messages', 0)}\n\n")
-        
-        output.write("📊 Замовлення за останні 30 днів:\n")
-        output.write(f"   Кількість: {stats.get('last_30_days_orders', 0)}\n")
-        output.write(f"   Сума: {stats.get('last_30_days_revenue', 0):.2f} грн\n\n")
-        
-        output.write("📊 Статуси замовлень:\n")
-        for status, count in stats.get('orders_by_status', {}).items():
-            output.write(f"   • {status}: {count}\n")
-        
-        output.write("\n👥 Сегментація клієнтів:\n")
-        segments = stats.get('segments', {})
-        output.write(f"   👑 VIP: {segments.get('vip', 0)}\n")
-        output.write(f"   ⭐ Постійні: {segments.get('regular', 0)}\n")
-        output.write(f"   🆕 Нові: {segments.get('new', 0)}\n")
-        output.write(f"   📊 Активні: {segments.get('active', 0)}\n")
-        output.write(f"   💤 Неактивні: {segments.get('inactive', 0)}\n")
-        
-        return output.getvalue().encode('utf-8')
-
-def generate_messages_report(messages: list, format: str = "txt"):
-    if format == "txt":
-        output = StringIO()
-        output.write("ЗВІТ ПО ПОВІДОМЛЕННЯХ\n")
-        output.write("=" * 80 + "\n")
-        output.write(f"Дата: {get_kyiv_time().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        output.write(f"Всього повідомлень: {len(messages)}\n")
-        output.write("=" * 80 + "\n\n")
-        
-        for msg in messages:
-            output.write(f"ID: {msg['id']}\n")
-            output.write(f"User ID: {msg['user_id']}\n")
-            output.write(f"Ім'я: {msg['user_name']}\n")
-            output.write(f"Username: @{msg['username']}\n")
-            output.write(f"Дата: {msg['created_at']}\n")
-            output.write(f"Тип: {msg['message_type']}\n")
-            output.write(f"Текст: {msg['text']}\n")
-            output.write("-" * 40 + "\n")
-        
-        return output.getvalue().encode('utf-8')
-    
-    elif format == "csv":
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['ID Повідомлення', 'User ID', 'Імя', 'Username', 'Дата', 'Тип', 'Текст'])
-        
-        for msg in messages:
-            writer.writerow([
-                msg['id'],
-                msg['user_id'],
-                msg['user_name'],
-                msg['username'],
-                msg['created_at'],
-                msg['message_type'],
-                msg['text']
-            ])
-        
-        return output.getvalue().encode('utf-8-sig')
-
-def get_statistics():
-    conn = get_db_connection()
-    if not conn:
-        return {}
-    
-    try:
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM orders")
-        regular_orders = cursor.fetchone()['count'] or 0
-        
-        cursor.execute("SELECT COUNT(*) FROM quick_orders")
-        quick_orders_count = cursor.fetchone()['count'] or 0
-        
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()['count'] or 0
-        
-        cursor.execute("SELECT COUNT(*) FROM messages")
-        total_messages = cursor.fetchone()['count'] or 0
-        
-        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM orders")
-        regular_revenue = cursor.fetchone()['coalesce'] or 0
-        
-        cursor.execute("SELECT COALESCE(SUM(total), 0) FROM quick_orders")
-        quick_revenue = cursor.fetchone()['coalesce'] or 0
-        
-        total_orders = regular_orders + quick_orders_count
-        total_revenue = regular_revenue + quick_revenue
-        
-        avg_check = total_revenue / total_orders if total_orders > 0 else 0
-        
-        cursor.execute("SELECT status, COUNT(*) FROM orders GROUP BY status")
-        rows = cursor.fetchall()
-        orders_by_status = {row['status']: row['count'] for row in rows}
-        
-        cursor.execute("SELECT status, COUNT(*) FROM quick_orders GROUP BY status")
-        quick_rows = cursor.fetchall()
-        for row in quick_rows:
-            status = row['status']
-            if status in orders_by_status:
-                orders_by_status[status] += row['count']
-            else:
-                orders_by_status[status] = row['count']
-        
-        cursor.execute('''
-            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM orders 
-            WHERE created_at >= NOW() - INTERVAL '30 days'
-        ''')
-        last_30_days_regular = cursor.fetchone()
-        
-        cursor.execute('''
-            SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(total), 0) FROM quick_orders 
-            WHERE created_at >= NOW() - INTERVAL '30 days'
-        ''')
-        last_30_days_quick = cursor.fetchone()
-        
-        last_30_days_count = (last_30_days_regular['coalesce'] or 0) + (last_30_days_quick['coalesce'] or 0)
-        last_30_days_sum = (last_30_days_regular['coalesce_2'] or 0) + (last_30_days_quick['coalesce_2'] or 0)
-        
-        users = get_all_users()
-        segments = {
-            "vip": 0,
-            "regular": 0,
-            "new": 0,
-            "inactive": 0,
-            "active": 0
-        }
-        
-        for user in users:
-            orders = get_user_orders(user['user_id'])
-            quick_orders = get_user_quick_orders(user['user_id'])
-            all_orders = orders + quick_orders
-            segment = get_customer_segment(user, all_orders)
-            if "VIP" in segment:
-                segments["vip"] += 1
-            elif "Постійний" in segment:
-                segments["regular"] += 1
-            elif "Неактивний" in segment:
-                segments["inactive"] += 1
-            elif "Новий" in segment:
-                segments["new"] += 1
-            else:
-                segments["active"] += 1
-        
-        return {
-            "total_orders": total_orders,
-            "total_users": total_users,
-            "total_quick_orders": quick_orders_count,
-            "total_messages": total_messages,
-            "total_revenue": total_revenue,
-            "avg_check": avg_check,
-            "orders_by_status": orders_by_status,
-            "last_30_days_orders": last_30_days_count,
-            "last_30_days_revenue": last_30_days_sum,
-            "segments": segments
-        }
-    except Exception as e:
-        logger.error(f"Помилка отримання статистики: {e}")
-        logger.error(traceback.format_exc())
-        return {}
-    finally:
-        conn.close()
+COMPANY_INFO = {
+    "name": "🌱 Компанія Бонелет",
+    "description": "Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.",
+    "details": [
+        "👨‍🌾 Працюємо з 2022 року",
+        "📍 Розташування: Одеська область, с. Великий Дальник",
+        "📞 Телефон: +380932599103",
+        "🕒 Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00",
+        "🚚 Доставка: Новою Поштою по всій Україні"
+    ]
+}
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
     keyboard = []
@@ -1874,536 +911,710 @@ def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
         keyboard.append(keyboard_row)
     return InlineKeyboardMarkup(keyboard)
 
-def get_main_menu():
-    keyboard = [
-        [{"text": "📦 Товари", "callback_data": "admin_products"}],
-        [{"text": "📋 Замовлення", "callback_data": "admin_orders"}],
-        [{"text": "👥 Клієнти", "callback_data": "admin_customers"}],
-        [{"text": "💬 Повідомлення", "callback_data": "admin_messages"}],
-        [{"text": "📊 Статистика", "callback_data": "admin_stats"}],
-        [{"text": "📁 Звіти", "callback_data": "admin_reports"}],
-        [{"text": "📢 Розсилки", "callback_data": "admin_broadcast"}],
-        [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
-        [{"text": "🔄 Скинути замовлення", "callback_data": "admin_reset_orders"}],
-        [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
-        [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
+def get_main_menu() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "🏢 Про компанію", "callback_data": "company"}],
+        [{"text": "📦 Наші продукти", "callback_data": "products"}],
+        [{"text": "❓ Часті запитання", "callback_data": "faq"}],
+        [
+            {"text": "🛒 Моя корзина", "callback_data": "cart"}, 
+            {"text": "📋 Мої замовлення", "callback_data": "my_orders"}
+        ],
+        [{"text": "📞 Зв'язатися з нами", "callback_data": "contact"}]
     ]
-    return create_inline_keyboard(keyboard)
+    return create_inline_keyboard(buttons)
 
 def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_{back_to}"}]]
+    buttons = [[{"text": "🔙 Назад", "callback_data": f"back_{back_to}"}]]
     return create_inline_keyboard(buttons)
 
-def get_products_menu():
-    keyboard = [
-        [{"text": "📋 Список товарів", "callback_data": "admin_product_list"}],
-        [{"text": "➕ Додати товар", "callback_data": "admin_product_add"}],
-        [{"text": "✏️ Редагувати товар", "callback_data": "admin_product_edit"}],
-        [{"text": "🗑 Видалити товар", "callback_data": "admin_product_delete"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_orders_menu():
-    keyboard = [
-        [{"text": "📋 Останні замовлення", "callback_data": "admin_order_recent"}],
-        [{"text": "📋 Всі замовлення", "callback_data": "admin_order_all"}],
-        [{"text": "🆕 Нові замовлення", "callback_data": "admin_order_new"}],
-        [{"text": "⚡ Швидкі замовлення", "callback_data": "admin_order_quick"}],
-        [{"text": "📞 Пошук за телефоном", "callback_data": "admin_order_by_phone"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_customers_menu():
-    keyboard = [
-        [{"text": "📋 Всі клієнти", "callback_data": "admin_customers_all"}],
-        [{"text": "🔍 Пошук за телефоном", "callback_data": "admin_customer_search"}],
-        [{"text": "👑 VIP клієнти", "callback_data": "admin_customers_vip"}],
-        [{"text": "⭐ Постійні клієнти", "callback_data": "admin_customers_regular"}],
-        [{"text": "🆕 Нові клієнти", "callback_data": "admin_customers_new"}],
-        [{"text": "💤 Неактивні клієнти", "callback_data": "admin_customers_inactive"}],
-        [{"text": "📁 Вивантажити клієнтів", "callback_data": "export_customers"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_messages_menu():
-    keyboard = [
-        [{"text": "📋 Останні повідомлення", "callback_data": "admin_messages_recent"}],
-        [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
-        [{"text": "📁 Всі повідомлення файлом", "callback_data": "messages_all_file"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_broadcast_menu():
-    keyboard = [
-        [{"text": "📢 Всім клієнтам", "callback_data": "broadcast_all"}],
-        [{"text": "👑 VIP клієнтам", "callback_data": "broadcast_vip"}],
-        [{"text": "⭐ Постійним клієнтам", "callback_data": "broadcast_regular"}],
-        [{"text": "🆕 Новим клієнтам", "callback_data": "broadcast_new"}],
-        [{"text": "💤 Неактивним клієнтам", "callback_data": "broadcast_inactive"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_broadcast_input_back_keyboard() -> InlineKeyboardMarkup:
-    buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_broadcast"}]]
-    return create_inline_keyboard(buttons)
-
-def get_reports_menu():
-    keyboard = [
-        [{"text": "📦 Замовлення (TXT)", "callback_data": "report_orders_txt"}],
-        [{"text": "📦 Замовлення (CSV)", "callback_data": "report_orders_csv"}],
-        [{"text": "👥 Клієнти (TXT)", "callback_data": "report_users_txt"}],
-        [{"text": "👥 Клієнти (CSV)", "callback_data": "report_users_csv"}],
-        [{"text": "⚡ Швидкі замовлення (TXT)", "callback_data": "report_quick_txt"}],
-        [{"text": "⚡ Швидкі замовлення (CSV)", "callback_data": "report_quick_csv"}],
-        [{"text": "💬 Повідомлення (TXT)", "callback_data": "report_messages_txt"}],
-        [{"text": "💬 Повідомлення (CSV)", "callback_data": "report_messages_csv"}],
-        [{"text": "📊 Статистика (TXT)", "callback_data": "report_stats_txt"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_admins_menu():
-    keyboard = [
-        [{"text": "📋 Список адмінів", "callback_data": "admin_list"}],
-        [{"text": "➕ Додати адміна", "callback_data": "admin_add"}],
-        [{"text": "🗑 Видалити адміна", "callback_data": "admin_remove"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_settings_menu():
-    keyboard = [
-        [{"text": "🔑 Змінити пароль", "callback_data": "admin_settings_password"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
-    keyboard = [
-        [{"text": "✅ Підтвердити", "callback_data": f"order_confirm_{order_id}_{order_type}"}],
-        [{"text": "📦 Упаковано", "callback_data": f"order_packed_{order_id}_{order_type}"}],
-        [{"text": "🚚 Відправлено", "callback_data": f"order_shipped_{order_id}_{order_type}"}],
-        [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
-        [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
-        [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_orders"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_message_actions_menu(message_id: int, user_id: int):
-    keyboard = [
-        [{"text": "📝 Відповісти", "callback_data": f"reply_user_{user_id}"}],
-        [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
-        [{"text": "📋 Всі повідомлення", "callback_data": "back_to_messages"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_messages"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_customer_actions_menu(user_id: int):
-    keyboard = [
-        [{"text": "📋 Історія замовлень", "callback_data": f"customer_orders_{user_id}"}],
-        [{"text": "💬 Повідомлення", "callback_data": f"customer_messages_{user_id}"}],
-        [{"text": "📢 Надіслати повідомлення", "callback_data": f"customer_message_{user_id}"}],
-        [{"text": "👑 Зробити адміном", "callback_data": f"customer_make_admin_{user_id}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_customers"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_order_status_keyboard(order_id: int, order_type: str = 'regular'):
-    keyboard = [
-        [{"text": "✅ Підтвердити", "callback_data": f"order_confirm_{order_id}_{order_type}"}],
-        [{"text": "📦 Упаковано", "callback_data": f"order_packed_{order_id}_{order_type}"}],
-        [{"text": "🚚 Відправлено", "callback_data": f"order_shipped_{order_id}_{order_type}"}],
-        [{"text": "📍 Прибуло", "callback_data": f"order_arrived_{order_id}_{order_type}"}],
-        [{"text": "❌ Скасувати", "callback_data": f"order_cancel_{order_id}_{order_type}"}],
-        [{"text": "📝 Відповісти", "callback_data": f"reply_order_{order_id}_{order_type}"}],
-        [{"text": "🔙 Назад", "callback_data": "back_to_orders"}]
-    ]
-    return create_inline_keyboard(keyboard)
-
-def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
+def get_products_menu() -> InlineKeyboardMarkup:
+    refresh_products()
     buttons = []
-    if has_more:
-        buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
-    buttons.append([{"text": "🔍 Детально", "callback_data": "admin_order_details"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_orders"}])
+    for product in PRODUCTS:
+        button_text = f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}"
+        buttons.append([{
+            "text": button_text,
+            "callback_data": f"product_{product['id']}"
+        }])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
 
-def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
+def get_product_detail_menu(product_id: int) -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "🛒 Додати в кошик", "callback_data": f"add_to_cart_{product_id}"}],
+        [{"text": "⚡ Швидке замовлення", "callback_data": f"quick_order_{product_id}"}],
+        [{"text": "🔙 Назад", "callback_data": "back_products"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_quick_order_menu(product_id: int) -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "📞 Зателефонуйте мені", "callback_data": f"quick_call_{product_id}"}],
+        [{"text": "💬 Напишіть мені в чат", "callback_data": f"quick_chat_{product_id}"}],
+        [{"text": "🔙 Назад", "callback_data": f"product_{product_id}"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_faq_menu() -> InlineKeyboardMarkup:
     buttons = []
-    if has_more:
-        buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": "admin_messages_more"}])
-    buttons.append([{"text": "🔍 Детально", "callback_data": "admin_messages_details"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_messages"}])
+    for i, faq in enumerate(FAQS, 1):
+        buttons.append([{
+            "text": f"❔ {faq['question'][:40]}...",
+            "callback_data": f"faq_{i}"
+        }])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
 
-def get_product_image_keyboard(product_id: int, has_image: bool = False) -> InlineKeyboardMarkup:
+def get_contact_menu() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "📞 Зателефонувати", "callback_data": "call_us"}],
+        [{"text": "📍 Наша адреса", "callback_data": "our_address"}],
+        [{"text": "💬 Написати нам тут", "callback_data": "write_here"}],
+        [{"text": "🔙 Назад", "callback_data": "back_main_menu"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_cart_menu(cart_items: List) -> InlineKeyboardMarkup:
     buttons = []
-    buttons.append([{"text": "🌐 Завантажити за URL", "callback_data": f"edit_product_image_url_{product_id}"}])
-    buttons.append([{"text": "📷 Завантажити файл", "callback_data": f"edit_product_image_file_{product_id}"}])
-    if has_image:
-        buttons.append([{"text": "🗑 Видалити фото", "callback_data": f"delete_product_image_{product_id}"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": f"back_to_edit_product_{product_id}"}])
+    if cart_items:
+        buttons.append([{"text": "✅ Оформити замовлення", "callback_data": "checkout_cart"}])
+        buttons.append([{"text": "🗑️ Очистити корзину", "callback_data": "clear_cart"}])
+        
+        for item in cart_items:
+            product_name = item["product"]["name"][:20]
+            if len(item["product"]["name"]) > 20:
+                product_name += "..."
+            buttons.append([{
+                "text": f"❌ {product_name} ({item['quantity']} {item['product']['unit']})",
+                "callback_data": f"remove_from_cart_{item['cart_id']}"
+            }])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
 
-def is_authenticated(user_id: int) -> bool:
-    return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
+def get_order_confirmation_keyboard() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "✅ Так, продовжити", "callback_data": "confirm_order_yes"}],
+        [{"text": "❌ Ні, скасувати", "callback_data": "confirm_order_no"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_my_orders_menu(orders: List) -> InlineKeyboardMarkup:
+    buttons = []
+    for order in orders[:5]:
+        buttons.append([{
+            "text": f"№{order['order_id']} - {order['created_at'][:16]} - {order['total']} грн",
+            "callback_data": f"user_order_{order['order_id']}"
+        }])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
+    return create_inline_keyboard(buttons)
+
+def parse_quantity(text: str) -> Tuple[bool, float, str]:
+    text = text.strip().replace(" ", "")
+    match = re.search(r'(\d+(?:[.,]\d+)?)', text)
+    
+    if not match:
+        return False, 0, "❌ Будь ласка, введіть число (наприклад: 1, 1.5, 2.3)"
+    
+    try:
+        num_str = match.group(1).replace(",", ".")
+        quantity = float(num_str)
+        if quantity <= 0:
+            return False, 0, "❌ Кількість повинна бути більше 0"
+        if quantity > 100:
+            return False, 0, "❌ Занадто велика кількість. Максимум 100"
+        return True, quantity, ""
+    except ValueError:
+        return False, 0, "❌ Некоректний формат числа"
+
+def validate_phone(phone: str) -> Tuple[bool, str]:
+    phone = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    
+    if re.match(r'^(\+38|38)?0\d{9}$', phone):
+        if phone.startswith("0"):
+            phone = "+38" + phone
+        elif phone.startswith("38"):
+            phone = "+" + phone
+        elif phone.startswith("+380"):
+            pass
+        else:
+            phone = "+380" + phone[1:] if phone.startswith("+") else "+380" + phone
+        return True, phone
+    return False, phone
+
+def get_welcome_text() -> str:
+    return """
+<b>🇺🇦 Вітаємо у боті компанії Бонелет! 🌱</b>
+
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
+
+🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
+🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
+🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
+
+<b>🏢 Про нас:</b>
+• Працюємо з 2022 року
+• Розташування: Одеська область, с. Великий Дальник
+• Доставка Новою Поштою по всій Україні
+
+<b>Оберіть опцію з меню 👇</b>
+    """
+
+def get_company_text() -> str:
+    text = f"""
+<b>{COMPANY_INFO['name']}</b>
+
+{COMPANY_INFO['description']}
+
+<b>📋 Деталі:</b>
+"""
+    for detail in COMPANY_INFO['details']:
+        text += f"• {detail}\n"
+    text += "\n<b>🌿 Наша філософія:</b>\n"
+    text += "• Вирощуємо на власних полях Одещини\n"
+    text += "• Використовуємо натуральне консервування\n"
+    text += "• Гарантуємо якість кожного продукту\n"
+    text += "• Працюємо з любов'ю до природи\n"
+    text += "\n<b>🚚 Доставка:</b>\n"
+    text += "• Новою Поштою по всій Україні\n"
+    text += "• Самовивіз з Одеської області, с. Великий Дальник\n"
+    text += "• Терміни доставки: 1-4 дні в залежності від регіону\n"
+    return text
+
+def get_product_text(product_id: int) -> str:
+    refresh_products()
+    product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+    if not product:
+        return "❌ Продукт не знайдено"
+    
+    text = f"""
+<b>{product['image']} {product['name']}</b>
+
+📝 <i>{product['description']}</i>
+
+💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
+🏷️ <b>Категорія:</b> {product['category']}
+📦 <b>Наявність:</b> Є в наявності
+
+<b>📊 Характеристики:</b>
+• {product['details']}
+
+<b>🌟 Переваги:</b>
+• Вирощений на Одещині
+• Натуральне консервування
+• Без штучних добавок
+• Висока якість
+
+<b>💡 Як використовувати:</b>
+Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
+"""
+    return text
+
+def get_quick_order_text(product_id: int) -> str:
+    refresh_products()
+    product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+    if not product:
+        return "❌ Продукт не знайдено"
+    
+    return f"""
+<b>⚡ Швидке замовлення: {product['image']} {product['name']}</b>
+
+💬 <b>Як ви бажаєте, щоб ми з вами зв'язалися?</b>
+
+📞 <b>Зателефонуйте мені</b> - ми зателефонуємо вам для уточнення деталей
+💬 <b>Напишіть мені в чат</b> - ви можете написати всі деталі тут і ми відповімо
+
+<i>Оберіть зручний для вас спосіб зв'язку 👇</i>
+    """
+
+def get_faq_text(faq_id: int) -> str:
+    if 0 <= faq_id - 1 < len(FAQS):
+        faq = FAQS[faq_id - 1]
+        return f"""
+<b>❔ {faq['question']}</b>
+
+{faq['answer']}
+
+<i>📞 Маєте інші запитання? Зв'яжіться з нами: +380932599103</i>
+        """
+    return "❌ Питання не знайдено"
+
+def get_contact_text() -> str:
+    return """
+<b>📞 Зв'язок з нами</b>
+
+Ми завжди раді допомогти вам!
+
+<b>Оберіть спосіб зв'язку:</b>
+• <b>Телефон</b> - для швидких запитань
+• <b>Адреса</b> - для самовивозу
+• <b>Написати тут</b> - швидке повідомлення в чаті
+
+<i>Просто напишіть нам повідомлення в цьому чаті 👇</i>
+    """
+
+def get_cart_text(cart_items: List[Dict]) -> str:
+    if not cart_items:
+        return "🛒 <b>Ваша корзина порожня</b>\n\nДодайте товари з каталогу!"
+    
+    text = "🛒 <b>Ваша корзина</b>\n\n"
+    total = 0
+    
+    for i, item in enumerate(cart_items, 1):
+        quantity = item["quantity"]
+        product = item["product"]
+        item_total = product["price"] * quantity
+        text += f"<b>{i}. {product['name']}</b>\n"
+        text += f"   📊 Кількість: <b>{quantity} {product['unit']}</b>\n"
+        text += f"   💰 Ціна: {product['price']} грн/{product['unit']} × {quantity} = <b>{item_total:.2f} грн</b>\n\n"
+        total += item_total
+    
+    text += f"<b>📊 Всього товарів:</b> {len(cart_items)}\n"
+    text += f"<b>💰 Загальна сума:</b> <b>{total:.2f} грн</b>\n\n"
+    
+    if len(cart_items) >= 3:
+        discount = total * 0.05
+        discount_total = total - discount
+        text += f"🎁 <b>Знижка 5% за 3+ банок:</b> -{discount:.2f} грн\n"
+        text += f"💵 <b>До сплати:</b> <b>{discount_total:.2f} грн</b>\n\n"
+    
+    text += "<i>Для оформлення замовлення натисніть кнопку нижче</i>"
+    return text
+
+def get_my_orders_text(orders: List[Dict]) -> str:
+    if not orders:
+        return "📋 <b>У вас ще немає замовлень</b>\n\nЗробіть перше замовлення в розділі 'Наші продукти'!"
+    
+    text = "📋 <b>Мої замовлення</b>\n\n"
+    for order in orders:
+        text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
+        text += f"Сума: {order['total']:.2f} грн | Статус: {order['status']}\n"
+        text += f"{'─'*40}\n"
+    return text
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    
-    if ADMIN_IDS and user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
-        return
-    
-    admin_sessions[user_id] = {"state": "waiting_password"}
-    await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
+    try:
+        user = update.effective_user
+        user_id = user.id
+        
+        logger.info(f"👤 [{datetime.now().strftime('%H:%M:%S')}] {user.first_name or 'Користувач'}: /start")
+        
+        Database.save_user(user_id, user.first_name, user.last_name or "", user.username or "")
+        
+        log_user({
+            "user_id": user_id,
+            "first_name": user.first_name,
+            "last_name": user.last_name or "",
+            "username": user.username or ""
+        })
+        
+        Database.clear_user_session(user_id)
+        welcome = get_welcome_text()
+        await update.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+        Database.save_user_session(user_id, last_section="main_menu")
+        
+    except Exception as e:
+        logger.error(f"❌ Помилка в start: {e}")
 
-async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("ℹ️ Допомога: оберіть опцію з меню", reply_markup=get_main_menu())
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
-    text = update.message.text.strip()
-    
-    if user_id not in admin_sessions or admin_sessions[user_id].get("state") != "waiting_password":
-        return
-    
-    if text == ADMIN_PASSWORD:
-        admin_sessions[user_id] = {"state": "authenticated", "authenticated_at": get_kyiv_time().isoformat()}
-        last_password_check[user_id] = get_kyiv_time()
-        
-        if not is_admin(user_id):
-            add_admin(user_id, user.username or "", user_id)
-        
-        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво просимо до адмін-панелі.", reply_markup=get_main_menu())
-    else:
-        await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
-        admin_sessions.pop(user_id, None)
+    Database.clear_user_session(user_id)
+    welcome = get_welcome_text()
+    await update.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+    Database.save_user_session(user_id, last_section="main_menu")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
         await query.answer()
         
+        chat_id = update.effective_chat.id
         user = query.from_user
         user_id = user.id
         data = query.data
         
-        logger.info(f"🖱️ Адмін {user_id} натиснув: {data}")
+        logger.info(f"🖱️ [{datetime.now().strftime('%H:%M:%S')}] {user.first_name or 'Користувач'} натиснув: {data}")
         
-        if not is_authenticated(user_id):
-            await query.edit_message_text("❌ Сесія закінчилась\n\nНапишіть /start для повторного входу")
-            return
+        Database.save_user(user_id, user.first_name, user.last_name or "", user.username or "")
         
-        # Обробка кнопок "Назад"
-        if data.startswith("back_to_"):
-            target = data[8:]
-            
-            if target.startswith("edit_product_"):
+        if data.startswith("back_"):
+            back_target = data[5:]
+            if back_target == "main_menu":
+                welcome = get_welcome_text()
                 try:
-                    product_id = int(target.split("_")[2])
-                    product = get_product_by_id(product_id)
-                    if product:
-                        admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_field", "product_id": product_id}
-                        keyboard = [
-                            [InlineKeyboardButton("📝 Назва", callback_data=f"edit_field_name_{product_id}")],
-                            [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
-                            [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
-                            [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
-                            [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
-                        ]
-                        await query.edit_message_text(
-                            f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
-                            reply_markup=InlineKeyboardMarkup(keyboard)
-                        )
-                        return
-                except:
-                    pass
-                
-                await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
-                return
-            elif target == "main":
-                await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
-                return
-            elif target == "orders":
-                await query.edit_message_text("📋 Керування замовленнями\n\nОберіть тип замовлень:", reply_markup=get_orders_menu())
-                return
-            elif target == "customers":
-                await query.edit_message_text("👥 Керування клієнтами\n\nОберіть дію:", reply_markup=get_customers_menu())
-                return
-            elif target == "messages":
-                await query.edit_message_text("💬 Керування повідомленнями\n\nОберіть дію:", reply_markup=get_messages_menu())
-                return
-            elif target == "broadcast":
-                await query.edit_message_text("📢 Розсилка повідомлень\n\nОберіть цільову аудиторію:", reply_markup=get_broadcast_menu())
-                return
-            elif target == "products":
-                await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
-                return
+                    await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="main_menu")
+            elif back_target == "products":
+                products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+                try:
+                    await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="products")
+            elif back_target == "faq":
+                faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
+                try:
+                    await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="faq")
+            elif back_target == "contact":
+                contact_text = get_contact_text()
+                try:
+                    await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="contact")
+            elif back_target == "cart":
+                cart_items = Database.get_cart_items(user_id)
+                cart_text = get_cart_text(cart_items)
+                try:
+                    await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="cart")
+            elif back_target == "my_orders":
+                orders = Database.get_user_orders(user_id)
+                text = get_my_orders_text(orders)
+                try:
+                    await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="my_orders")
             else:
-                await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
-                return
+                welcome = get_welcome_text()
+                try:
+                    await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                except Exception:
+                    await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+                Database.save_user_session(user_id, last_section="main_menu")
         
-        elif data == "admin_logout":
-            admin_sessions.pop(user_id, None)
-            last_password_check.pop(user_id, None)
-            await query.edit_message_text("🔐 Ви вийшли з адмін-панелі\n\nДля повторного входу напишіть /start")
-            return
+        elif data == "company":
+            company_text = get_company_text()
+            await query.edit_message_text(company_text, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="company")
         
-        elif data == "admin_reset_orders":
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Так, видалити всі замовлення", callback_data="confirm_reset_orders")],
-                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_main")]
-            ])
-            await query.edit_message_text("⚠️ <b>Ви дійсно хочете видалити ВСІ замовлення та повідомлення?</b>\n\nКлієнти та товари залишаться, але всі замовлення та повідомлення будуть безповоротно видалені.", reply_markup=keyboard, parse_mode='HTML')
-            return
+        elif data == "products":
+            products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+            await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="products")
         
-        elif data == "confirm_reset_orders":
-            success = await reset_all_orders()
-            if success:
-                text = "✅ Всі замовлення та повідомлення успішно видалено!"
-            else:
-                text = "❌ Помилка при видаленні"
-            await query.edit_message_text(text, reply_markup=get_main_menu())
-            return
-        
-        elif data == "admin_products":
-            await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
-            return
-        
-        elif data == "admin_product_list":
-            products = get_all_products()
-            if not products:
-                text = "📦 Список товарів\n\nТоварів не знайдено."
-            else:
-                text = "📦 Список товарів\n\n"
-                for p in products:
-                    text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн\nКатегорія: {p['category']}\n{'─'*30}\n"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data == "admin_product_add":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "add_product_name"}
-            await query.edit_message_text("➕ Додавання нового товару\n\nВведіть назву товару:", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif data == "admin_product_edit":
-            products = get_all_products()
-            if not products:
-                await query.edit_message_text("❌ Товарів не знайдено", reply_markup=get_products_menu())
-                return
-            keyboard = []
-            for p in products[:20]:
-                keyboard.append([InlineKeyboardButton(f"{p['id']}. {p['name'][:30]}", callback_data=f"edit_product_{p['id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
-            await query.edit_message_text("✏️ Редагування товару\n\nОберіть товар для редагування:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        # СПОЧАТКУ специфічні обробники для фото
-        elif data.startswith("edit_product_image_url_"):
-            logger.info(f"🔄 Натиснуто кнопку edit_product_image_url_, data: {data}")
-            parts = data.split("_")
-            logger.info(f"Розбито на частини: {parts}")
-            try:
-                product_id = int(parts[-1])
-                logger.info(f"✅ Розпарсено product_id: {product_id}")
-            except (IndexError, ValueError) as e:
-                logger.error(f"❌ Помилка парсингу ID: {e}")
-                await query.edit_message_text("❌ Помилка: некоректний ID товару (помилка парсингу)", reply_markup=get_products_menu())
-                return
-
-            # Перевіряємо, чи товар існує
+        elif data.startswith("product_"):
+            product_id = int(data.split("_")[1])
             product = get_product_by_id(product_id)
-            if not product:
-                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
-                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
-                return
-
-            # Зберігаємо стан
-            admin_sessions[user_id] = {
-                "state": "authenticated",
-                "action": "edit_product_image_url",
-                "product_id": product_id
-            }
-            logger.info(f"✅ Стан збережено в admin_sessions[{user_id}]: {admin_sessions[user_id]}")
-
-            await query.edit_message_text(
-                "🌐 Введіть URL зображення:",
-                reply_markup=get_back_keyboard(f"edit_product_{product_id}")
-            )
-            return
-        
-        elif data.startswith("edit_product_image_file_"):
-            logger.info(f"🔄 Натиснуто кнопку edit_product_image_file_, data: {data}")
-            parts = data.split("_")
-            logger.info(f"Розбито на частини: {parts}")
-            try:
-                product_id = int(parts[-1])
-                logger.info(f"✅ Розпарсено product_id: {product_id}")
-            except (IndexError, ValueError) as e:
-                logger.error(f"❌ Помилка парсингу ID: {e}")
-                await query.edit_message_text("❌ Помилка: некоректний ID товару (помилка парсингу)", reply_markup=get_products_menu())
-                return
-
-            product = get_product_by_id(product_id)
-            if not product:
-                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
-                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
-                return
-
-            admin_sessions[user_id] = {
-                "state": "authenticated",
-                "action": "edit_product_image_file",
-                "product_id": product_id
-            }
-            logger.info(f"✅ Стан збережено в admin_sessions[{user_id}]: {admin_sessions[user_id]}")
-
-            await query.edit_message_text(
-                "📷 Надішліть фото товару:",
-                reply_markup=get_back_keyboard(f"edit_product_{product_id}")
-            )
-            return
-        
-        elif data.startswith("delete_product_image_"):
-            logger.info(f"🔄 Натиснуто кнопку delete_product_image_, data: {data}")
-            try:
-                product_id = int(data.split("_")[-1])
-                logger.info(f"✅ Розпарсено product_id: {product_id}")
-            except (IndexError, ValueError) as e:
-                logger.error(f"❌ Помилка парсингу ID: {e}")
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
+            product_text = get_product_text(product_id)
             
-            product = get_product_by_id(product_id)
-            if not product:
-                logger.error(f"❌ Товар з ID {product_id} не знайдено в БД")
-                await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
-                return
+            logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path') if product else None}")
             
-            # Видаляємо старе фото, якщо воно було збережене локально
+            # Спочатку пробуємо відправити з локального файлу (image_path)
             if product and product.get('image_path'):
                 try:
+                    # Перевіряємо чи файл існує
                     if os.path.exists(product['image_path']):
-                        os.remove(product['image_path'])
-                        logger.info(f"Видалено файл зображення: {product['image_path']}")
+                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
+                        with open(product['image_path'], 'rb') as photo:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo,
+                                caption=product_text,
+                                parse_mode='HTML',
+                                reply_markup=get_product_detail_menu(product_id)
+                            )
+                        await query.message.delete()
+                        Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                        return
+                    else:
+                        logger.warning(f"Файл не знайдено: {product['image_path']}")
                 except Exception as e:
-                    logger.error(f"Помилка видалення файлу: {e}")
+                    logger.error(f"Помилка відправки фото з файлу: {e}")
             
-            # Оновлюємо товар в БД - видаляємо обидва поля
-            if update_product(product_id, image_path=None, image_file_id=None):
-                await query.edit_message_text(
-                    f"✅ Фото товару #{product_id} видалено!",
-                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
-                )
+            # Якщо немає файлу або помилка, пробуємо file_id
+            if product and product.get('image_file_id'):
+                try:
+                    logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=product['image_file_id'],
+                        caption=product_text,
+                        parse_mode='HTML',
+                        reply_markup=get_product_detail_menu(product_id)
+                    )
+                    await query.message.delete()
+                except Exception as e:
+                    logger.error(f"Помилка відправки фото з file_id: {e}")
+                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             else:
-                await query.edit_message_text(
-                    f"❌ Помилка при видаленні фото",
-                    reply_markup=get_back_keyboard(f"edit_product_{product_id}")
-                )
-            return
-        
-        # ТІЛЬКИ ПІСЛЯ специфічних обробників йде загальний edit_product_
-        elif data.startswith("edit_product_"):
-            logger.info(f"📝 Натиснуто загальний edit_product_ з data: {data}")
-            try:
-                product_id = int(data.split("_")[2])
-                logger.info(f"✅ Розпарсено product_id: {product_id}")
-            except (IndexError, ValueError):
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
+                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             
-            product = get_product_by_id(product_id)
+            Database.save_user_session(user_id, last_section=f"product_{product_id}")
+        
+        elif data.startswith("add_to_cart_"):
+            product_id = int(data.split("_")[3])
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            
             if not product:
-                await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
                 return
-            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_field", "product_id": product_id}
-            keyboard = [
-                [InlineKeyboardButton("📝 Назва", callback_data=f"edit_field_name_{product_id}")],
-                [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
-                [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
-                [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
-                [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
-            ]
-            await query.edit_message_text(
-                f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+            
+            temp_data = {"product_id": product_id}
+            Database.save_user_session(user_id, "waiting_quantity", temp_data)
+            
+            response = f"📦 <b>Додавання {product['name']} до кошика</b>\n\n"
+            response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
+            response += "📊 <b>Введіть кількість (тільки число):</b>\n\n"
+            response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
+            
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+        
+        elif data.startswith("quick_order_"):
+            product_id = int(data.split("_")[2])
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            
+            if not product:
+                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
+                return
+            
+            quick_order_text = get_quick_order_text(product_id)
+            await query.edit_message_text(quick_order_text, reply_markup=get_quick_order_menu(product_id), parse_mode='HTML')
+        
+        elif data.startswith("quick_call_"):
+            product_id = int(data.split("_")[2])
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            
+            if not product:
+                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
+                return
+            
+            temp_data = {"product_id": product_id}
+            Database.save_user_session(user_id, "waiting_phone_for_quick_order", temp_data)
+            
+            response = f"📞 <b>Зателефонуйте мені: {product['name']}</b>\n\n"
+            response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
+            response += "📱 <b>Введіть ваш номер телефону:</b>\n\n"
+            response += "<i>Приклад: +380932599103 або 0932599103</i>\n\n"
+            response += "<b>Ми зателефонуємо вам для уточнення деталей замовлення!</b>"
+            
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+        
+        elif data.startswith("quick_chat_"):
+            product_id = int(data.split("_")[2])
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            
+            if not product:
+                await query.edit_message_text("❌ Продукт не знайдено", reply_markup=get_back_keyboard("products"))
+                return
+            
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
+            
+            order_id = Database.save_quick_order(
+                user_id=user_id,
+                user_name=user_name,
+                username=username,
+                product_id=product_id,
+                product_name=product['name'],
+                quantity=0,
+                phone=None,
+                contact_method="chat",
+                message=None
             )
-            return
+            
+            Database.save_user_session(user_id, "waiting_message_for_quick_order", {"order_id": order_id, "product_name": product['name']})
+            
+            response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
+            response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
+            response += "💬 <b>Просто напишіть ваше повідомлення в цей чат!</b>\n\n"
+            response += "Вкажіть:\n"
+            response += "• Бажану кількість\n"
+            response += "• Контактні дані\n"
+            response += "• Бажаний час доставки\n\n"
+            response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
+            
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            
+            logger.info(f"\n{'='*80}")
+            logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ЧАТ - очікування повідомлення):")
+            logger.info(f"👤 Клієнт: {user_name}")
+            logger.info(f"📦 Продукт: {product['name']}")
+            logger.info(f"🆔 User ID: {user_id}")
+            logger.info(f"{'='*80}\n")
         
-        elif data == "admin_product_delete":
-            products = get_all_products()
-            if not products:
-                await query.edit_message_text("❌ Товарів не знайдено", reply_markup=get_products_menu())
-                return
-            keyboard = []
-            for p in products[:20]:
-                keyboard.append([InlineKeyboardButton(f"❌ {p['id']}. {p['name'][:30]}", callback_data=f"delete_product_{p['id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
-            await query.edit_message_text("🗑 Видалення товару\n\nОберіть товар для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+        elif data == "faq":
+            faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
+            await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="faq")
         
-        elif data.startswith("delete_product_"):
-            parts = data.split("_")
-            if len(parts) < 3:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
-            try:
-                product_id = int(parts[2])
-            except ValueError:
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
-            
-            keyboard = [
-                [InlineKeyboardButton("✅ Так, видалити", callback_data=f"confirm_delete_{product_id}")],
-                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_products")]
-            ]
-            await query.edit_message_text(f"🗑 Підтвердження видалення\n\nВи дійсно хочете видалити товар #{product_id}?", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+        elif data.startswith("faq_"):
+            faq_id = int(data.split("_")[1])
+            faq_text = get_faq_text(faq_id)
+            await query.edit_message_text(faq_text, reply_markup=get_back_keyboard("faq"), parse_mode='HTML')
         
-        elif data.startswith("confirm_delete_"):
-            parts = data.split("_")
-            if len(parts) < 3:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
+        elif data == "cart":
+            cart_items = Database.get_cart_items(user_id)
+            cart_text = get_cart_text(cart_items)
+            await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="cart")
+        
+        elif data == "my_orders":
+            orders = Database.get_user_orders(user_id)
+            text = get_my_orders_text(orders)
+            await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="my_orders")
+        
+        elif data.startswith("user_order_"):
+            order_id = int(data.split("_")[2])
+            await query.edit_message_text(
+                f"📋 Деталі замовлення #{order_id} (в розробці)",
+                reply_markup=get_back_keyboard("my_orders")
+            )
+        
+        elif data.startswith("remove_from_cart_"):
+            cart_id = int(data.split("_")[3])
+            Database.remove_from_cart(cart_id)
+            cart_items = Database.get_cart_items(user_id)
+            cart_text = get_cart_text(cart_items)
+            await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+        
+        elif data == "checkout_cart":
+            cart_items = Database.get_cart_items(user_id)
+            
+            if not cart_items:
+                response = "🛒 <b>Ваша корзина порожня</b>\n\n"
+                response += "Додайте товари з каталогу перед оформленням замовлення!"
+                await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
                 return
             
-            try:
-                product_id = int(parts[2])
-            except ValueError:
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
+            Database.save_user_session(user_id, "full_order_name", {})
             
-            if delete_product(product_id):
-                text = "✅ Товар успішно видалено!"
+            response = "🛒 <b>Оформлення замовлення</b>\n\n"
+            response += f"📦 У вашій корзині: <b>{len(cart_items)} товар(ів)</b>\n"
+            
+            total = sum(item["product"]["price"] * item["quantity"] for item in cart_items)
+            response += f"💰 Загальна сума: <b>{total:.2f} грн</b>\n\n"
+            response += "📝 <b>Введіть ваше ПІБ (повне ім'я):</b>\n\n"
+            response += "<i>Наприклад: Іванов Іван Іванович</i>"
+            
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+        
+        elif data == "clear_cart":
+            Database.clear_cart(user_id)
+            response = "🗑️ <b>Корзина очищена!</b>\n\n"
+            response += "Ваша корзина тепер порожня.\n"
+            response += "<i>Додайте товари з каталогу.</i>"
+            await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
+        
+        elif data == "contact":
+            contact_text = get_contact_text()
+            await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="contact")
+        
+        elif data == "write_here":
+            Database.save_user_session(user_id, "waiting_message")
+            response = "💬 <b>Написати нам тут</b>\n\n"
+            response += "Напишіть ваше повідомлення прямо в цьому чаті:\n\n"
+            response += "• Питання про продукти\n"
+            response += "• Консультація\n"
+            response += "• Пропозиції співпраці\n"
+            response += "• Інші питання\n\n"
+            response += "<i>Ми відповімо вам найближчим часом!</i>"
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+        
+        elif data in ["call_us", "our_address"]:
+            if data == "call_us":
+                contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
+                contact_info += "✅ <code>+380932599103</code>\n\n"
+                contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
             else:
-                text = "❌ Помилка при видаленні товару"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
+                contact_info = "📍 <b>Наша адреса:</b>\n\n"
+                contact_info += "🏠 Одеська область\n"
+                contact_info += "📌 село Великий Дальник\n"
+                contact_info += "🚗 <b>Самовивіз можливий за попереднім домовленням</b>\n\n"
+                contact_info += "<i>Графік самовивозу: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
+            
+            await query.edit_message_text(contact_info, reply_markup=get_back_keyboard("contact"), parse_mode='HTML')
         
-        # ... решта обробників (замовлення, клієнти, тощо) залишаються без змін ...
-        # (я їх не включаю сюди для економії місця, але вони мають бути в коді)
+        elif data.startswith("confirm_order_"):
+            if data == "confirm_order_yes":
+                session = Database.get_user_session(user_id)
+                temp_data = session["temp_data"]
+                
+                try:
+                    order_id = Database.create_order(temp_data)
+                    
+                    if order_id > 0:
+                        logger.info(f"\n{'='*80}")
+                        logger.info(f"✅ НОВЕ ЗАМОВЛЕННЯ #{order_id}:")
+                        logger.info(f"👤 Клієнт: {temp_data.get('user_name', '')}")
+                        logger.info(f"📞 Телефон: {temp_data.get('phone', '')}")
+                        logger.info(f"🏙️ Місто: {temp_data.get('city', '')}")
+                        logger.info(f"🏣 НП: {temp_data.get('np_department', '')}")
+                        logger.info(f"💰 Сума: {temp_data.get('total', 0):.2f} грн")
+                        logger.info(f"🛒 Товарів: {len(temp_data.get('items', []))}")
+                        logger.info(f"🆔 User ID: {user_id}")
+                        logger.info(f"{'='*80}\n")
+                        
+                        temp_data["order_id"] = order_id
+                        temp_data["status"] = "нове"
+                        temp_data["order_type"] = "regular"
+                        log_order(temp_data)
+                        
+                        await notify_admins_about_new_order(temp_data)
+                        
+                        Database.clear_user_session(user_id)
+                        
+                        text = f"✅ <b>Замовлення оформлено!</b>\n\n"
+                        text += f"🆔 Номер замовлення: <b>#{order_id}</b>\n"
+                        text += f"👤 ПІБ: <b>{temp_data.get('user_name', '')}</b>\n"
+                        text += f"📱 Телефон: <b>{temp_data.get('phone', '')}</b>\n"
+                        text += f"🏙️ Місто: <b>{temp_data.get('city', '')}</b>\n"
+                        text += f"🏣 Відділення Нової Пошти: <b>{temp_data.get('np_department', '')}</b>\n"
+                        text += f"💰 Сума: <b>{temp_data.get('total', 0):.2f} грн</b>\n\n"
+                        text += "📞 <b>Ми зв'яжемось з вами для підтвердження!</b>\n\n"
+                        text += "<i>Дякуємо за замовлення! 🌱</i>"
+                    else:
+                        text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
+                        text += "Будь ласка, спробуйте ще раз або зв'яжіться з нами.\n\n"
+                        text += "<i>Вибачте за незручності.</i>"
+                        Database.clear_user_session(user_id)
+                except Exception as e:
+                    logger.error(f"❌ Помилка при створенні замовлення: {e}")
+                    text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
+                    text += "Будь ласка, спробуйте ще раз.\n\n"
+                    text += "<i>Вибачте за незручності.</i>"
+                    Database.clear_user_session(user_id)
+            else:
+                text = "❌ <b>Замовлення скасовано</b>\n\n"
+                text += "Ви можете продовжити покупки.\n"
+                text += "<i>Ваша корзина збережена.</i>"
+                Database.clear_user_session(user_id)
+            
+            await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
         
         else:
             logger.warning(f"⚠️ Невідомий callback: {data}")
-            await query.edit_message_text("❌ Невідома команда", reply_markup=get_main_menu())
+            welcome = get_welcome_text()
+            await query.edit_message_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
             
     except Exception as e:
-        logger.error(f"❌ Помилка в button_handler: {e}")
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Помилка обробки callback: {e}")
         try:
-            await query.edit_message_text(
-                "❌ Сталася помилка. Повертаємось до головного меню.",
-                reply_markup=get_main_menu()
-            )
+            text = "❌ <b>Сталася помилка</b>\n\n"
+            text += "Будь ласка, спробуйте ще раз або використайте /start"
+            keyboard = get_main_menu()
+            await query.edit_message_text(text, keyboard, parse_mode='HTML')
         except:
             pass
 
@@ -2411,276 +1622,415 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.effective_user
         user_id = user.id
-        text = update.message.text.strip() if update.message.text else ""
+        text = update.message.text.strip()
         
-        logger.info(f"📝 Адмін {user_id}: {text[:50] if text else '[Фото]'}...")
+        logger.info(f"👤 [{datetime.now().strftime('%H:%M:%S')}] {user.first_name or 'Користувач'}: {text[:50]}...")
         
-        if user_id in admin_sessions and admin_sessions[user_id].get("state") == "waiting_password":
-            await check_password(update, context)
+        Database.save_user(user_id, user.first_name, user.last_name or "", user.username or "")
+        
+        if text == "/start" or text == "/cancel" or text.lower() == "скасувати":
+            Database.clear_user_session(user_id)
+            welcome = get_welcome_text()
+            await update.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
             return
         
-        if not is_authenticated(user_id):
+        if text == "/help":
+            await update.message.reply_text("ℹ️ Допомога: оберіть опцію з меню", reply_markup=get_main_menu())
             return
         
-        session = admin_sessions.get(user_id, {})
-        action = session.get("action")
-        logger.info(f"📌 Поточний action: {action}, session: {session}")
+        session = Database.get_user_session(user_id)
+        state = session["state"]
+        temp_data = session["temp_data"]
         
-        if action == "add_product_name":
-            admin_sessions[user_id]["product_name"] = text
-            admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("products"))
-            return
+        if state == "waiting_quantity":
+            product_id = temp_data.get("product_id")
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            
+            if not product:
+                await update.message.reply_text("❌ Помилка: продукт не знайдено", reply_markup=get_main_menu())
+                Database.clear_user_session(user_id)
+                return
+            
+            success, quantity, error_msg = parse_quantity(text)
+            
+            if not success:
+                response = f"❌ <b>Невірний формат!</b>\n\n{error_msg}\n\n"
+                response += f"<b>Продукт:</b> {product['name']}\n"
+                response += f"<b>Ціна:</b> {product['price']} грн/{product['unit']}\n\n"
+                response += "📊 <b>Введіть кількість (тільки число):</b>\n"
+                response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
+                await update.message.reply_text(response, parse_mode='HTML')
+                return
+            
+            Database.add_to_cart(user_id, product_id, quantity)
+            Database.clear_user_session(user_id)
+            
+            total_price = product["price"] * quantity
+            response = f"✅ <b>{product['name']}</b> додано до кошика!\n\n"
+            response += f"📊 Кількість: <b>{quantity} {product['unit']}</b>\n"
+            response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n"
+            response += f"💵 Сума: <b>{total_price:.2f} грн</b>\n\n"
+            
+            cart_items = Database.get_cart_items(user_id)
+            response += f"🛒 У кошику: <b>{len(cart_items)} товар(ів)</b>\n\n"
+            response += "<i>Продовжуйте додавати товари або перейдіть до оформлення замовлення.</i>"
+            
+            await update.message.reply_text(response, parse_mode='HTML')
+            
+            products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+            await update.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="products")
         
-        elif action == "add_product_price":
-            try:
-                price = float(text.replace(",", "."))
-                admin_sessions[user_id]["product_price"] = price
-                admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("products"))
-            except ValueError:
-                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_category":
-            admin_sessions[user_id]["product_category"] = text
-            admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_description":
-            admin_sessions[user_id]["product_description"] = text
-            admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_unit":
-            admin_sessions[user_id]["product_unit"] = text
-            admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_image":
-            admin_sessions[user_id]["product_image"] = text
-            admin_sessions[user_id]["action"] = "add_product_image_upload"
-            await update.message.reply_text("📷 Надішліть фото товару (або введіть 'пропустити'):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_image_upload":
-            if update.message.photo:
-                file_id = update.message.photo[-1].file_id
-                # Тимчасово завантажуємо файл, щоб отримати file_id (не зберігаємо)
-                image_path = await download_telegram_file(file_id, context.bot)
-                if image_path:
-                    # Видаляємо тимчасовий файл
-                    try:
-                        os.remove(image_path)
-                    except:
-                        pass
-                
-                admin_sessions[user_id]["product_image_path"] = None
-                admin_sessions[user_id]["product_image_file_id"] = file_id
-                admin_sessions[user_id]["action"] = "add_product_details"
-                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
-            elif text.lower() == "пропустити" or text == "-":
-                admin_sessions[user_id]["product_image_path"] = None
-                admin_sessions[user_id]["product_image_file_id"] = None
-                admin_sessions[user_id]["action"] = "add_product_details"
-                await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
-            else:
-                await update.message.reply_text("❌ Будь ласка, надішліть фото або введіть 'пропустити'")
-            return
-        
-        elif action == "add_product_details":
-            product_data = {
-                "name": session.get("product_name"),
-                "price": session.get("product_price"),
-                "category": session.get("product_category"),
-                "description": session.get("product_description"),
-                "unit": session.get("product_unit"),
-                "image": session.get("product_image"),
-                "image_path": None,  # Не зберігаємо локальні файли
-                "image_file_id": session.get("product_image_file_id"),
-                "details": text
+        elif state == "waiting_message":
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
+            
+            Database.save_message(user_id, user_name, username, text, "повідомлення з меню")
+            
+            message_data = {
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "text": text,
+                "message_type": "повідомлення з меню",
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
+            await notify_admins_about_message(message_data)
             
-            product_id = add_product(**product_data)
+            log_message(message_data)
             
-            if product_id:
-                await update.message.reply_text(
-                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн",
-                    reply_markup=get_products_menu()
-                )
-            else:
-                await update.message.reply_text("❌ Помилка при додаванні товару", reply_markup=get_products_menu())
+            logger.info(f"\n{'='*80}")
+            logger.info(f"💬 НОВЕ ПОВІДОМЛЕННЯ:")
+            logger.info(f"👤 Ім'я: {user_name}")
+            logger.info(f"📱 Username: {username}")
+            logger.info(f"🆔 ID: {user_id}")
+            logger.info(f"💬 Текст: {text}")
+            logger.info(f"🕒 Час: {datetime.now().isoformat()}")
+            logger.info(f"{'='*80}\n")
             
-            admin_sessions[user_id].pop("action", None)
-            return
+            response = "✅ <b>Повідомлення отримано!</b>\n\n"
+            response += "Ми відповімо вам найближчим часом.\n"
+            response += "<i>Дякуємо за звернення! 🌱</i>"
+            
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.clear_user_session(user_id)
+            Database.save_user_session(user_id, last_section="main_menu")
         
-        elif action == "edit_product_image_url":
-            product_id = session.get("product_id")
-            logger.info(f"📝 Отримано повідомлення для edit_product_image_url, product_id з сесії: {product_id}, текст: {text}")
+        elif state == "waiting_message_for_quick_order":
+            order_id = temp_data.get("order_id")
+            product_name = temp_data.get("product_name")
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
             
-            if not product_id:
-                logger.error("❌ product_id не знайдено в сесії!")
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            # Завантажуємо зображення за URL (тимчасово)
-            logger.info(f"🌐 Завантаження з URL: {text}")
-            image_path, _ = await download_image_from_url(text)
-            
-            if image_path:
-                logger.info(f"✅ Фото завантажено тимчасово: {image_path}")
-                
-                # Відправляємо фото в Telegram, щоб отримати file_id
+            conn = get_db_connection()
+            if conn:
                 try:
-                    with open(image_path, 'rb') as photo:
-                        sent_message = await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="Тимчасове фото для отримання file_id"
-                        )
-                    
-                    # Отримуємо file_id з відправленого фото
-                    if sent_message and sent_message.photo:
-                        file_id = sent_message.photo[-1].file_id
-                        logger.info(f"✅ Отримано file_id: {file_id}")
-                        
-                        # Видаляємо повідомлення з фото
-                        await context.bot.delete_message(chat_id=user_id, message_id=sent_message.message_id)
-                        
-                        # Видаляємо старий image_file_id/image_path, зберігаємо новий file_id
-                        if update_product(product_id, image_file_id=file_id, image_path=None):
-                            await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено за URL! (збережено file_id)", reply_markup=get_products_menu())
-                        else:
-                            await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
-                    else:
-                        logger.error("❌ Не вдалося отримати file_id з відправленого фото")
-                        await update.message.reply_text("❌ Помилка при отриманні file_id", reply_markup=get_products_menu())
-                
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        UPDATE quick_orders 
+                        SET message = %s 
+                        WHERE id = %s
+                    ''', (text, order_id))
+                    conn.commit()
                 except Exception as e:
-                    logger.error(f"❌ Помилка при відправці фото в Telegram: {e}")
-                    await update.message.reply_text("❌ Помилка при обробці фото", reply_markup=get_products_menu())
+                    logger.error(f"❌ Помилка оновлення повідомлення: {e}")
                 finally:
-                    # Видаляємо тимчасовий файл
-                    try:
-                        if os.path.exists(image_path):
-                            os.remove(image_path)
-                            logger.info(f"🗑 Видалено тимчасовий файл: {image_path}")
-                    except Exception as e:
-                        logger.error(f"Помилка видалення тимчасового файлу: {e}")
-            else:
-                logger.error(f"❌ Не вдалося завантажити зображення за URL: {text}")
-                await update.message.reply_text("❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", reply_markup=get_products_menu())
+                    conn.close()
             
-            admin_sessions[user_id].pop("action", None)
-            return
+            Database.save_message(user_id, user_name, username, text, "швидке замовлення")
+            
+            await send_combined_quick_order_notification(order_id, user_id, user_name, username, product_name, text)
+            
+            log_quick_order({
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "phone": None,
+                "product_name": product_name,
+                "contact_method": "chat",
+                "message": text,
+                "status": "нове"
+            })
+            
+            logger.info(f"\n{'='*80}")
+            logger.info(f"✅ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} - отримано повідомлення:")
+            logger.info(f"👤 Клієнт: {user_name}")
+            logger.info(f"📱 Username: {username}")
+            logger.info(f"📦 Продукт: {product_name}")
+            logger.info(f"💬 Повідомлення: {text}")
+            logger.info(f"{'='*80}\n")
+            
+            response = f"✅ <b>Дякуємо! Ваше повідомлення отримано!</b>\n\n"
+            response += f"🆔 <b>Номер замовлення:</b> #{order_id}\n"
+            response += f"📦 <b>Продукт:</b> {product_name}\n"
+            response += f"💬 <b>Ваше повідомлення:</b> {text}\n\n"
+            response += "<b>Ми зв'яжемося з вами найближчим часом для уточнення деталей!</b>\n\n"
+            response += "<i>Дякуємо за замовлення! 🌱</i>"
+            
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.clear_user_session(user_id)
+            Database.save_user_session(user_id, last_section="main_menu")
         
-        elif action == "edit_product_image_file":
-            product_id = session.get("product_id")
-            logger.info(f"📝 Отримано фото для edit_product_image_file, product_id з сесії: {product_id}")
+        elif state.startswith("full_order_"):
+            if state == "full_order_name":
+                temp_data["user_name"] = text
+                temp_data["username"] = user.username or "немає"
+                Database.save_user_session(user_id, "full_order_phone", temp_data)
+                
+                response = "📱 <b>Введіть ваш номер телефону:</b>\n\n"
+                response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                await update.message.reply_text(response, parse_mode='HTML')
             
-            if not product_id:
-                logger.error("❌ product_id не знайдено в сесії!")
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
-                admin_sessions[user_id].pop("action", None)
+            elif state == "full_order_phone":
+                phone = text.strip()
+                is_valid, formatted_phone = validate_phone(phone)
+                
+                if not is_valid:
+                    response = f"❌ <b>Невірний номер телефону!</b>\n\n"
+                    response += "📱 <b>Введіть ваш номер телефону ще раз:</b>\n"
+                    response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                    await update.message.reply_text(response, parse_mode='HTML')
+                    return
+                
+                temp_data["phone"] = formatted_phone
+                Database.save_user_session(user_id, "full_order_city", temp_data)
+                
+                response = "🏙️ <b>Введіть місто доставки:</b>\n\n"
+                response += "<i>Наприклад: Київ, Львів, Одеса</i>"
+                await update.message.reply_text(response, parse_mode='HTML')
+            
+            elif state == "full_order_city":
+                temp_data["city"] = text
+                Database.save_user_session(user_id, "full_order_np", temp_data)
+                
+                response = "🏣 <b>Введіть номер відділення Нової Пошти:</b>\n\n"
+                response += "<i>Наприклад: Відділення №25, Поштомат №12345</i>"
+                await update.message.reply_text(response, parse_mode='HTML')
+            
+            elif state == "full_order_np":
+                temp_data["np_department"] = text
+                
+                cart_items = Database.get_cart_items(user_id)
+                total = sum(item["product"]["price"] * item["quantity"] for item in cart_items)
+                
+                if len(cart_items) >= 3:
+                    total = total * 0.95
+                
+                temp_data["total"] = total
+                temp_data["order_type"] = "повне замовлення"
+                temp_data["user_id"] = user_id
+                
+                order_items = []
+                for item in cart_items:
+                    order_items.append({
+                        "product_name": item["product"]["name"],
+                        "quantity": item["quantity"],
+                        "price": item["product"]["price"]
+                    })
+                
+                temp_data["items"] = order_items
+                Database.save_user_session(user_id, "full_order_confirm", temp_data)
+                
+                response = "✅ <b>Дані отримано! Перевірте інформацію:</b>\n\n"
+                response += f"👤 <b>ПІБ:</b> {temp_data.get('user_name', '')}\n"
+                response += f"📱 <b>Телефон:</b> {temp_data.get('phone', '')}\n"
+                response += f"🏙️ <b>Місто:</b> {temp_data.get('city', '')}\n"
+                response += f"🏣 <b>Відділення Нової Пошти:</b> {text}\n"
+                response += f"🛒 <b>Товарів у кошику:</b> {len(cart_items)}\n"
+                
+                if len(cart_items) >= 3:
+                    original_total = sum(item["product"]["price"] * item["quantity"] for item in cart_items)
+                    discount = original_total * 0.05
+                    response += f"🎁 <b>Знижка 5% за 3+ банок:</b> -{discount:.2f} грн\n"
+                
+                response += f"💰 <b>Загальна сума:</b> {total:.2f} грн\n\n"
+                response += "<b>Підтвердити замовлення?</b>"
+                
+                await update.message.reply_text(response, reply_markup=get_order_confirmation_keyboard(), parse_mode='HTML')
+        
+        elif state == "waiting_phone_for_quick_order":
+            phone = text.strip()
+            product_id = temp_data.get("product_id")
+            
+            refresh_products()
+            product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+            if not product:
+                await update.message.reply_text("❌ Помилка: продукт не знайдено", reply_markup=get_main_menu())
+                Database.clear_user_session(user_id)
                 return
             
-            if update.message.photo:
-                file_id = update.message.photo[-1].file_id
-                logger.info(f"📸 Отримано file_id: {file_id}")
-                
-                # Тимчасово завантажуємо файл (не зберігаємо)
-                image_path = await download_telegram_file(file_id, context.bot)
-                if image_path:
-                    try:
-                        os.remove(image_path)
-                        logger.info(f"🗑 Видалено тимчасовий файл")
-                    except:
-                        pass
-                
-                # Оновлюємо товар в БД - зберігаємо ТІЛЬКИ file_id
-                if update_product(product_id, image_file_id=file_id, image_path=None):
-                    await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено! (збережено file_id)", reply_markup=get_products_menu())
-                else:
-                    await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
-            else:
-                await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
+            is_valid, formatted_phone = validate_phone(phone)
+            
+            if not is_valid:
+                response = f"❌ <b>Невірний номер телефону!</b>\n\n"
+                response += "📱 <b>Введіть ваш номер телефону ще раз:</b>\n"
+                response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                await update.message.reply_text(response, parse_mode='HTML')
                 return
             
-            admin_sessions[user_id].pop("action", None)
-            return
-        
-        # ... решта обробників (редагування полів, пошук, тощо) залишаються без змін ...
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
+            
+            order_id = Database.save_quick_order(
+                user_id, user_name, username, product_id, product["name"], 
+                0, formatted_phone, "call", None
+            )
+            
+            order_data = {
+                "id": order_id,
+                "order_type": "quick",
+                "user_name": user_name,
+                "username": username,
+                "phone": formatted_phone,
+                "product_name": product['name'],
+                "contact_method": "call",
+                "user_id": user_id,
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_new_order(order_data)
+            
+            log_quick_order({
+                "order_id": order_id,
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "phone": formatted_phone,
+                "product_name": product["name"],
+                "contact_method": "call",
+                "message": None,
+                "status": "нове"
+            })
+            
+            logger.info(f"\n{'='*80}")
+            logger.info(f"⚡ ШВИДКЕ ЗАМОВЛЕННЯ #{order_id} (ТЕЛЕФОН):")
+            logger.info(f"👤 Клієнт: {user_name}")
+            logger.info(f"📞 Телефон: {formatted_phone}")
+            logger.info(f"📦 Продукт: {product['name']}")
+            logger.info(f"💰 Ціна: {product['price']} грн/{product['unit']}")
+            logger.info(f"🆔 User ID: {user_id}")
+            logger.info(f"📱 Username: {username}")
+            logger.info(f"{'='*80}\n")
+            
+            Database.clear_user_session(user_id)
+            
+            response = f"✅ <b>Швидке замовлення прийнято!</b>\n\n"
+            response += f"🆔 <b>Номер замовлення:</b> #{order_id}\n"
+            response += f"📦 <b>Продукт:</b> {product['name']}\n"
+            response += f"📞 <b>Ваш телефон:</b> {formatted_phone}\n\n"
+            response += "<b>Ми зателефонуємо вам найближчим часом для уточнення деталей!</b>\n\n"
+            response += "<i>Дякуємо за замовлення! 🌱</i>"
+            
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
         
         else:
-            await update.message.reply_text("❌ Невідома команда", reply_markup=get_main_menu())
+            user_name = f"{user.first_name or ''} {user.last_name or ''}"
+            username = user.username or 'немає'
+            
+            Database.save_message(user_id, user_name, username, text, "повідомлення в чаті")
+            
+            message_data = {
+                "user_id": user_id,
+                "user_name": user_name,
+                "username": username,
+                "text": text,
+                "message_type": "повідомлення в чаті",
+                "created_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            await notify_admins_about_message(message_data)
+            
+            log_message(message_data)
+            
+            response = "✅ <b>Повідомлення отримано!</b>\n\n"
+            response += "Ми відповімо вам найближчим часом.\n"
+            response += "<i>Дякуємо за звернення! 🌱</i>"
+            
+            await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="main_menu")
             
     except Exception as e:
         logger.error(f"❌ Помилка в message_handler: {e}")
-        logger.error(traceback.format_exc())
-        await update.message.reply_text(
-            "❌ Сталася помилка. Повертаємось до головного меню.",
-            reply_markup=get_main_menu()
-        )
 
-# ... інші функції (send_broadcast_to_all, send_broadcast_to_segment, main) залишаються без змін ...
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        logger.error(f"⚠️ Помилка під час обробки оновлення {update}: {context.error}")
+        
+        if 'Conflict' in str(context.error):
+            logger.warning("🔄 Виявлено конфлікт - можливо запущено дублюючий бот")
+            return
+        
+        if update and update.effective_chat:
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="❌ <b>Виникла помилка</b>\n\nБудь ласка, спробуйте ще раз або використайте /start",
+                    parse_mode='HTML'
+                )
+            except:
+                pass
+    except Exception as e:
+        logger.error(f"❌ Помилка в обробнику помилок: {e}")
 
 def main():
-    logger.info("🚀 Запуск адмін-бота Бонелет...")
-    
     try:
-        conn = get_db_connection()
-        if conn:
-            logger.info(f"✅ Підключення до бази даних успішне")
-            logger.info("🔄 Викликаю init_database_if_empty()...")
-            init_result = init_database_if_empty()
-            logger.info(f"📊 Результат ініціалізації: {init_result}")
-            
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM users")
-                users_count = cursor.fetchone()['count']
-                cursor.execute("SELECT COUNT(*) FROM orders")
-                orders_count = cursor.fetchone()['count']
-                cursor.execute("SELECT COUNT(*) FROM products")
-                products_count = cursor.fetchone()['count']
-                cursor.execute("SELECT COUNT(*) FROM quick_orders")
-                quick_orders_count = cursor.fetchone()['count']
-                cursor.execute("SELECT COUNT(*) FROM messages")
-                messages_count = cursor.fetchone()['count']
-                
-                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {quick_orders_count} швидких замовлень, {products_count} товарів, {messages_count} повідомлень")
-                
-            except Exception as e:
-                logger.error(f"❌ Помилка отримання статистики: {e}")
-                logger.error(traceback.format_exc())
-            
-            conn.close()
-        else:
-            logger.warning("⚠️ Не вдалося підключитись до БД")
-            init_database_if_empty()
+        if not check_single_instance():
+            logger.error("🚫 Бот вже запущено в іншому процесі! Завершуємо...")
+            sys.exit(1)
+        
+        time.sleep(2)
+        
+        if not init_database():
+            logger.error("❌ Не вдалося ініціалізувати базу даних")
+            return
+        
+        refresh_products()
+        
+        stats = Database.get_statistics()
+        logger.info("=" * 80)
+        logger.info("🌱 БОТ КОМПАНІЇ 'БОНЕЛЕТ' ЗАПУЩЕНО")
+        logger.info(f"🔑 Токен: {TOKEN[:10]}...")
+        logger.info("=" * 80)
+        logger.info("📊 Статистика:")
+        logger.info(f"• Користувачів: {stats.get('total_users', 0)}")
+        logger.info(f"• Замовлень: {stats.get('total_orders', 0)}")
+        logger.info(f"• Повідомлень: {stats.get('total_messages', 0)}")
+        logger.info(f"• Швидких замовлень: {stats.get('quick_orders', 0)}")
+        logger.info(f"• Активних кошиків: {stats.get('active_carts', 0)}")
+        logger.info(f"• Продуктів у базі: {len(PRODUCTS)}")
+        logger.info(f"• Виручка: {stats.get('total_revenue', 0):.2f} грн")
+        logger.info("=" * 80)
+        logger.info("🔄 Очікування повідомлень...\n")
         
         application = Application.builder().token(TOKEN).build()
         
         application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(CommandHandler("cancel", cancel_command))
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-        application.add_handler(MessageHandler(filters.PHOTO, message_handler))
         
-        logger.info("✅ Адмін-бот готовий до роботи")
-        application.run_polling(drop_pending_updates=True)
+        application.add_error_handler(error_handler)
+        
+        logger.info("🚀 Запуск polling...")
+        application.run_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES,
+            poll_interval=2.0,
+            timeout=30,
+            read_timeout=30,
+            connect_timeout=30,
+            pool_timeout=30,
+            close_loop=False
+        )
         
     except Exception as e:
-        logger.error(f"❌ Критична помилка: {e}")
+        logger.error(f"❌ КРИТИЧНА ПОМИЛКА: {e}")
+        import traceback
         logger.error(traceback.format_exc())
-        time.sleep(5)
+        time.sleep(10)
 
 if __name__ == "__main__":
     main()
-
-
-
-
