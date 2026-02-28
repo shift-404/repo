@@ -11,7 +11,7 @@ from io import StringIO, BytesIO
 import asyncio
 import traceback
 import time
-import requests
+
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot, InputMediaPhoto
 from telegram.ext import (
@@ -2643,3 +2643,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
