@@ -23,6 +23,40 @@ from telegram.ext import (
     ContextTypes
 )
 
+import sys
+import os
+
+print("🚀 Бот запускається...")
+print(f"📂 Поточна папка: {os.getcwd()}")
+print(f"📄 Файли в папці: {os.listdir('.')}")
+
+# Перевіряємо токен
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    print("❌ ПОМИЛКА: BOT_TOKEN не знайдено!")
+    sys.exit(1)
+else:
+    print(f"✅ BOT_TOKEN знайдено: {BOT_TOKEN[:5]}...")
+
+# Перевіряємо DATABASE_URL
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    print("❌ ПОМИЛКА: DATABASE_URL не знайдено!")
+    sys.exit(1)
+else:
+    print("✅ DATABASE_URL знайдено")
+
+print("🔄 Спроба підключитися до бази даних...")
+try:
+    import psycopg2
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.close()
+    print("✅ Підключення до БД успішне")
+except Exception as e:
+    print(f"❌ Помилка підключення до БД: {e}")
+
+print("🚦 Бот готовий до запуску...")
+
 logging.basicConfig(
     format='%(asctime)s - ADMIN - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -2643,5 +2677,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
