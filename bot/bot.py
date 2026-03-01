@@ -9,6 +9,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import asyncio
+import requests
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
@@ -45,10 +46,10 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
-# Директорія для зображень - така ж як в адмін-боті
+# СПІЛЬНА ПАПКА ДЛЯ ЗОБРАЖЕНЬ (така ж як в адмін-боті)
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
-print(f"📁 Папка для зображень: {IMAGE_DIR}")
+print(f"📁 Спільна папка для зображень: {IMAGE_DIR}")
 
 def get_db_connection():
     try:
@@ -160,8 +161,8 @@ def init_database():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
-                image_file_id TEXT,
                 image_path TEXT,
+                image_url TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -176,18 +177,19 @@ def init_database():
             )
         ''')
         
+        # Додаємо колонки якщо їх немає
         try:
             cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
         except:
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
         except:
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
         except:
             pass
         
@@ -211,7 +213,7 @@ def init_database():
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_file_id, image_path, details)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_url, details)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
@@ -784,8 +786,8 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
-                    "image_file_id": row.get('image_file_id'),
                     "image_path": row.get('image_path'),
+                    "image_url": row.get('image_url'),
                     "details": row['details']
                 }
                 products.append(product)
@@ -1305,45 +1307,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             logger.info(f"📦 Відкрито товар #{product_id}")
             
-            # Спочатку пробуємо відправити з file_id (Telegram зберігає фото на своїх серверах)
-            if product and product.get('image_file_id'):
+            # Перевіряємо чи є локальний файл
+            if product and product.get('image_path'):
                 try:
-                    logger.info(f"📸 Відправляємо фото з file_id: {product['image_file_id']}")
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=product['image_file_id'],
-                        caption=product_text,
-                        parse_mode='HTML',
-                        reply_markup=get_product_detail_menu(product_id)
-                    )
-                    await query.message.delete()
-                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                    return
-                except Exception as e:
-                    logger.error(f"❌ Помилка відправки фото з file_id: {e}")
-                    # Якщо file_id не працює, пробуємо з локального файлу
-                    if product.get('image_path'):
-                        try:
-                            if os.path.exists(product['image_path']):
-                                logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                                with open(product['image_path'], 'rb') as photo:
-                                    await context.bot.send_photo(
-                                        chat_id=chat_id,
-                                        photo=photo,
-                                        caption=product_text,
-                                        parse_mode='HTML',
-                                        reply_markup=get_product_detail_menu(product_id)
-                                    )
-                                await query.message.delete()
-                                return
-                            else:
-                                logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
-                        except Exception as e:
-                            logger.error(f"❌ Помилка відправки фото з файлу: {e}")
-            
-            # Якщо немає file_id, пробуємо з локального файлу
-            elif product and product.get('image_path'):
-                try:
+                    # Перевіряємо чи файл існує
                     if os.path.exists(product['image_path']):
                         logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
                         with open(product['image_path'], 'rb') as photo:
@@ -1355,14 +1322,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 reply_markup=get_product_detail_menu(product_id)
                             )
                         await query.message.delete()
+                        Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                        return
                     else:
                         logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
-                        await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
                 except Exception as e:
-                    logger.error(f"❌ Помилка відправки фото з файлу: {e}")
-                    await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
-            else:
-                await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
+                    logger.error(f"❌ Помилка відкриття файлу: {e}")
+            
+            # Якщо є URL, пробуємо відправити через нього
+            elif product and product.get('image_url'):
+                try:
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=product['image_url'],
+                        caption=product_text,
+                        parse_mode='HTML',
+                        reply_markup=get_product_detail_menu(product_id)
+                    )
+                    await query.message.delete()
+                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                    return
+                except Exception as e:
+                    logger.error(f"❌ Помилка відправки фото з URL: {e}")
+            
+            # Якщо нічого не спрацювало, відправляємо тільки текст
+            await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             
             Database.save_user_session(user_id, last_section=f"product_{product_id}")
         
@@ -1986,6 +1970,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Помилка в обробнику помилок: {e}")
 
+async def refresh_products_periodically():
+    """Періодичне оновлення списку товарів"""
+    while True:
+        refresh_products()
+        await asyncio.sleep(60)  # Оновлювати кожну хвилину
+
 def main():
     try:
         if not check_single_instance():
@@ -2025,6 +2015,11 @@ def main():
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
         application.add_error_handler(error_handler)
+        
+        # Запускаємо періодичне оновлення товарів
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.create_task(refresh_products_periodically())
         
         logger.info("🚀 Запуск polling...")
         application.run_polling(
