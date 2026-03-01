@@ -3408,12 +3408,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Завантажуємо зображення за URL
             image_bytes = await download_image_from_url_to_bytes(text)
             
-            if image_bytes:
-                # Оновлюємо товар в БД
-                if update_product(product_id, image_data=image_bytes):
-                    await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено за URL!", reply_markup=get_products_menu())
-                else:
-                    await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
+        if image_bytes:
+            # Оновлюємо товар в БД - зберігаємо байти
+            if update_product(product_id, image_data=image_bytes):
+                await update.message.reply_text(
+                    f"✅ Фото товару #{product_id} оновлено! (збережено в БД)", 
+                    reply_markup=get_products_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні фото в базі даних", 
+                    reply_markup=get_products_menu()
+                )
             else:
                 await update.message.reply_text("❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", 
                                                reply_markup=get_products_menu())
@@ -3427,7 +3433,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if not product_id:
                 logger.error("❌ product_id не знайдено в сесії!")
-                await update.message.reply_text("❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    "❌ Помилка: ID товару не знайдено. Спробуйте ще раз.", 
+                    reply_markup=get_products_menu()
+                )
                 admin_sessions[user_id].pop("action", None)
                 return
             
@@ -3435,17 +3444,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_id = update.message.photo[-1].file_id
                 logger.info(f"📸 Отримано file_id: {file_id}")
                 
-                # Завантажуємо фото через адмін-бота (але ми не можемо отримати байти через іншого бота)
-                # Тому просто повідомляємо, що потрібно надіслати команду основному боту
-                await update.message.reply_text(
-                    f"📸 Для завантаження фото через основний бот, перейдіть в @your_main_bot_username та надішліть команду:\n\n"
-                    f"`/setphoto {product_id}`\n\n"
-                    f"Після цього надішліть фото як файл або вкажіть URL.",
-                    parse_mode='Markdown',
-                    reply_markup=get_products_menu()
-                )
+                # Завантажуємо фото в пам'ять як байти
+                image_bytes = await download_telegram_file_to_bytes(file_id, context.bot)
+                
+                if image_bytes:
+                    # Оновлюємо товар в БД - зберігаємо байти
+                    if update_product(product_id, image_data=image_bytes):
+                        await update.message.reply_text(
+                            f"✅ Фото товару #{product_id} оновлено! (збережено в БД)", 
+                            reply_markup=get_products_menu()
+                        )
+                    else:
+                        await update.message.reply_text(
+                            "❌ Помилка при оновленні фото в базі даних", 
+                            reply_markup=get_products_menu()
+                        )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при завантаженні фото", 
+                        reply_markup=get_products_menu()
+                    )
             else:
-                await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
+                await update.message.reply_text(
+                    "❌ Будь ласка, надішліть фото", 
+                    reply_markup=get_back_keyboard("products")
+                )
                 return
             
             admin_sessions[user_id].pop("action", None)
@@ -3872,3 +3895,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
