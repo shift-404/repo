@@ -792,7 +792,9 @@ class Database:
             cursor.execute('SELECT image_data FROM products WHERE id = %s', (product_id,))
             row = cursor.fetchone()
             if row and row['image_data']:
-                return row['image_data']
+                if hasattr(row['image_data'], 'tobytes'):
+                    return row['image_data'].tobytes()
+                return bytes(row['image_data'])
             return None
         except Exception as e:
             logger.error(f"Помилка отримання зображення товару: {e}")
@@ -1421,6 +1423,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         Database.save_user(user_id, user.first_name, user.last_name or "", user.username or "")
         
+        # Обробка кнопок "Назад"
         if data.startswith("back_"):
             back_target = data[5:]
             if back_target == "main_menu":
@@ -1474,16 +1477,75 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception:
                     await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="main_menu")
+            return
         
+        # Основні розділи меню
         elif data == "company":
             company_text = get_company_text()
             await query.edit_message_text(company_text, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="company")
+            return
         
         elif data == "products":
             products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
             await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="products")
+            return
+        
+        elif data == "faq":
+            faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
+            await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="faq")
+            return
+        
+        elif data == "cart":
+            cart_items = Database.get_cart_items(user_id)
+            cart_text = get_cart_text(cart_items)
+            await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="cart")
+            return
+        
+        elif data == "my_orders":
+            orders = Database.get_user_orders(user_id)
+            text = get_my_orders_text(orders)
+            await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="my_orders")
+            return
+        
+        elif data == "contact":
+            contact_text = get_contact_text()
+            await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section="contact")
+            return
+        
+        elif data in ["call_us", "our_address"]:
+            if data == "call_us":
+                contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
+                contact_info += "✅ <code>+380932599103</code>\n\n"
+                contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
+            else:
+                contact_info = "📍 <b>Наша адреса:</b>\n\n"
+                contact_info += "🏠 Одеська область\n"
+                contact_info += "📌 село Великий Дальник\n"
+                contact_info += "🚗 <b>Самовивіз можливий за попереднім домовленням</b>\n\n"
+                contact_info += "<i>Графік самовивозу: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
+            
+            await query.edit_message_text(contact_info, reply_markup=get_back_keyboard("contact"), parse_mode='HTML')
+            return
+        
+        elif data == "write_here":
+            Database.save_user_session(user_id, "waiting_message")
+            response = "💬 <b>Написати нам тут</b>\n\n"
+            response += "Напишіть ваше повідомлення прямо в цьому чаті:\n\n"
+            response += "• Питання про продукти\n"
+            response += "• Консультація\n"
+            response += "• Пропозиції співпраці\n"
+            response += "• Інші питання\n\n"
+            response += "<i>Ми відповімо вам найближчим часом!</i>"
+            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            return
+        
+        # ============== ОБРОБНИКИ ТОВАРІВ ==============
         
         elif data.startswith("product_"):
             product_id = int(data.split("_")[1])
@@ -1500,6 +1562,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     from io import BytesIO
                     photo = BytesIO(image_data)
+                    photo.name = f"product_{product_id}.jpg"
                     logger.info(f"📸 Відправляємо фото з БД для товару #{product_id}")
                     
                     await context.bot.send_photo(
@@ -1515,10 +1578,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"❌ Помилка відправки фото з БД: {e}")
             
-            # Якщо немає фото, відправляємо тільки текст
+            # Якщо немає фото або помилка, відправляємо тільки текст
             await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             
             Database.save_user_session(user_id, last_section=f"product_{product_id}")
+            return
         
         elif data.startswith("add_to_cart_"):
             product_id = int(data.split("_")[3])
@@ -1538,6 +1602,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            return
+        
+        # ============== ОБРОБНИКИ ШВИДКОГО ЗАМОВЛЕННЯ ==============
         
         elif data.startswith("quick_order_"):
             product_id = int(data.split("_")[2])
@@ -1550,6 +1617,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             quick_order_text = get_quick_order_text(product_id)
             await query.edit_message_text(quick_order_text, reply_markup=get_quick_order_menu(product_id), parse_mode='HTML')
+            Database.save_user_session(user_id, last_section=f"quick_order_{product_id}")
+            return
         
         elif data.startswith("quick_call_"):
             product_id = int(data.split("_")[2])
@@ -1570,6 +1639,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<b>Ми зателефонуємо вам для уточнення деталей замовлення!</b>"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            return
         
         elif data.startswith("quick_chat_"):
             product_id = int(data.split("_")[2])
@@ -1614,35 +1684,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"📦 Продукт: {product['name']}")
             logger.info(f"🆔 User ID: {user_id}")
             logger.info(f"{'='*80}\n")
+            return
         
-        elif data == "faq":
-            faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
-            await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="faq")
+        # ============== ОБРОБНИКИ FAQ ==============
         
         elif data.startswith("faq_"):
             faq_id = int(data.split("_")[1])
             faq_text = get_faq_text(faq_id)
             await query.edit_message_text(faq_text, reply_markup=get_back_keyboard("faq"), parse_mode='HTML')
+            return
         
-        elif data == "cart":
-            cart_items = Database.get_cart_items(user_id)
-            cart_text = get_cart_text(cart_items)
-            await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="cart")
-        
-        elif data == "my_orders":
-            orders = Database.get_user_orders(user_id)
-            text = get_my_orders_text(orders)
-            await query.edit_message_text(text, reply_markup=get_my_orders_menu(orders), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="my_orders")
-        
-        elif data.startswith("user_order_"):
-            order_id = int(data.split("_")[2])
-            await query.edit_message_text(
-                f"📋 Деталі замовлення #{order_id} (в розробці)",
-                reply_markup=get_back_keyboard("my_orders")
-            )
+        # ============== ОБРОБНИКИ КОРЗИНИ ==============
         
         elif data.startswith("remove_from_cart_"):
             cart_id = int(data.split("_")[3])
@@ -1650,6 +1702,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cart_items = Database.get_cart_items(user_id)
             cart_text = get_cart_text(cart_items)
             await query.edit_message_text(cart_text, reply_markup=get_cart_menu(cart_items), parse_mode='HTML')
+            return
         
         elif data == "checkout_cart":
             cart_items = Database.get_cart_items(user_id)
@@ -1671,6 +1724,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<i>Наприклад: Іванов Іван Іванович</i>"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            return
         
         elif data == "clear_cart":
             Database.clear_cart(user_id)
@@ -1679,36 +1733,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response += "<i>Додайте товари з каталогу.</i>"
             await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
+            return
         
-        elif data == "contact":
-            contact_text = get_contact_text()
-            await query.edit_message_text(contact_text, reply_markup=get_contact_menu(), parse_mode='HTML')
-            Database.save_user_session(user_id, last_section="contact")
+        # ============== ОБРОБНИКИ ЗАМОВЛЕНЬ ==============
         
-        elif data == "write_here":
-            Database.save_user_session(user_id, "waiting_message")
-            response = "💬 <b>Написати нам тут</b>\n\n"
-            response += "Напишіть ваше повідомлення прямо в цьому чаті:\n\n"
-            response += "• Питання про продукти\n"
-            response += "• Консультація\n"
-            response += "• Пропозиції співпраці\n"
-            response += "• Інші питання\n\n"
-            response += "<i>Ми відповімо вам найближчим часом!</i>"
-            await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+        elif data.startswith("user_order_"):
+            order_id = int(data.split("_")[2])
+            await query.edit_message_text(
+                f"📋 Деталі замовлення #{order_id} (в розробці)",
+                reply_markup=get_back_keyboard("my_orders")
+            )
+            return
         
-        elif data in ["call_us", "our_address"]:
-            if data == "call_us":
-                contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
-                contact_info += "✅ <code>+380932599103</code>\n\n"
-                contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
-            else:
-                contact_info = "📍 <b>Наша адреса:</b>\n\n"
-                contact_info += "🏠 Одеська область\n"
-                contact_info += "📌 село Великий Дальник\n"
-                contact_info += "🚗 <b>Самовивіз можливий за попереднім домовленням</b>\n\n"
-                contact_info += "<i>Графік самовивозу: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
-            
-            await query.edit_message_text(contact_info, reply_markup=get_back_keyboard("contact"), parse_mode='HTML')
+        # ============== ОБРОБНИКИ ПІДТВЕРДЖЕННЯ ЗАМОВЛЕННЯ ==============
         
         elif data.startswith("confirm_order_"):
             if data == "confirm_order_yes":
@@ -1767,6 +1804,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
+            return
         
         else:
             logger.warning(f"⚠️ Невідомий callback: {data}")
@@ -1859,6 +1897,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
             await update.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="products")
+            return
         
         elif state == "waiting_message":
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
@@ -1894,6 +1933,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.clear_user_session(user_id)
             Database.save_user_session(user_id, last_section="main_menu")
+            return
         
         elif state == "waiting_message_for_quick_order":
             order_id = temp_data.get("order_id")
@@ -1950,6 +1990,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.clear_user_session(user_id)
             Database.save_user_session(user_id, last_section="main_menu")
+            return
         
         elif state.startswith("full_order_"):
             if state == "full_order_name":
@@ -1960,6 +2001,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = "📱 <b>Введіть ваш номер телефону:</b>\n\n"
                 response += "<i>Приклад: +380932599103 або 0932599103</i>"
                 await update.message.reply_text(response, parse_mode='HTML')
+                return
             
             elif state == "full_order_phone":
                 phone = text.strip()
@@ -1978,6 +2020,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = "🏙️ <b>Введіть місто доставки:</b>\n\n"
                 response += "<i>Наприклад: Київ, Львів, Одеса</i>"
                 await update.message.reply_text(response, parse_mode='HTML')
+                return
             
             elif state == "full_order_city":
                 temp_data["city"] = text
@@ -1986,6 +2029,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response = "🏣 <b>Введіть номер відділення Нової Пошти:</b>\n\n"
                 response += "<i>Наприклад: Відділення №25, Поштомат №12345</i>"
                 await update.message.reply_text(response, parse_mode='HTML')
+                return
             
             elif state == "full_order_np":
                 temp_data["np_department"] = text
@@ -2027,6 +2071,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 response += "<b>Підтвердити замовлення?</b>"
                 
                 await update.message.reply_text(response, reply_markup=get_order_confirmation_keyboard(), parse_mode='HTML')
+                return
         
         elif state == "waiting_phone_for_quick_order":
             phone = text.strip()
@@ -2102,6 +2147,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
+            return
         
         else:
             user_name = f"{user.first_name or ''} {user.last_name or ''}"
