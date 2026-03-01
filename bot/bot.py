@@ -924,7 +924,7 @@ def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
     return create_inline_keyboard(buttons)
 
 def get_products_menu() -> InlineKeyboardMarkup:
-    refresh_products()
+    refresh_products()  # Оновлюємо перед кожним показом
     buttons = []
     for product in PRODUCTS:
         button_text = f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}"
@@ -1077,7 +1077,7 @@ def get_company_text() -> str:
     return text
 
 def get_product_text(product_id: int) -> str:
-    refresh_products()
+    refresh_products()  # Оновлюємо перед показом товару
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
     if not product:
         return "❌ Продукт не знайдено"
@@ -1302,10 +1302,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("product_"):
             product_id = int(data.split("_")[1])
+            refresh_products()  # Оновлюємо дані з БД
             product = get_product_by_id(product_id)
             product_text = get_product_text(product_id)
             
-            logger.info(f"📦 Відкрито товар #{product_id}")
+            logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path') if product else None}")
             
             # Перевіряємо чи є локальний файл
             if product and product.get('image_path'):
@@ -1326,6 +1327,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         return
                     else:
                         logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
+                        # Очищаємо невалідний шлях в БД
+                        Database.get_connection()
+                        conn = get_db_connection()
+                        if conn:
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE products SET image_path = NULL WHERE id = %s", (product_id,))
+                                conn.commit()
+                                logger.info(f"🧹 Очищено невалідний image_path для товару {product_id}")
+                            except Exception as e:
+                                logger.error(f"❌ Помилка очищення image_path: {e}")
+                            finally:
+                                conn.close()
                 except Exception as e:
                     logger.error(f"❌ Помилка відкриття файлу: {e}")
             
@@ -1958,7 +1972,7 @@ async def refresh_products_periodically():
     """Періодичне оновлення списку товарів"""
     while True:
         refresh_products()
-        await asyncio.sleep(60)  # Оновлювати кожну хвилину
+        await asyncio.sleep(30)  # Оновлювати кожні 30 секунд
 
 def main():
     try:
