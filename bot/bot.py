@@ -45,18 +45,6 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
-# СПІЛЬНА ПАПКА ДЛЯ ЗОБРАЖЕНЬ (така ж як в адмін-боті)
-IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
-os.makedirs(IMAGE_DIR, exist_ok=True)
-print(f"📁 Спільна папка для зображень: {IMAGE_DIR}")
-
-# Додайте це для встановлення правильних прав доступу
-try:
-    os.chmod(IMAGE_DIR, 0o777)  # Повний доступ до папки
-    print("✅ Права доступу до папки встановлено")
-except Exception as e:
-    print(f"⚠️ Помилка встановлення прав: {e}")
-
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -167,8 +155,7 @@ def init_database():
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
-                image_path TEXT,
-                image_url TEXT,
+                image_data BYTEA,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -183,22 +170,12 @@ def init_database():
             )
         ''')
         
-        # Додаємо колонки якщо їх немає
+        # Додаємо колонку image_data якщо її немає
         try:
-            cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
-        except:
-            pass
-        
-        try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_path TEXT')
-        except:
-            pass
-        
-        try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
-            logger.info("✅ Колонка image_url додана до таблиці products")
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
+            logger.info("✅ Колонка image_data додана до таблиці products")
         except Exception as e:
-            logger.error(f"❌ Помилка додавання колонки image_url: {e}")
+            logger.error(f"❌ Помилка додавання колонки image_data: {e}")
         
         cursor.execute("SELECT COUNT(*) FROM products")
         count = cursor.fetchone()['count']
@@ -207,21 +184,21 @@ def init_database():
             products = [
                 (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
+                 "банка", "🥫", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
                 
                 (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
                  "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", None, None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
+                 "банка", "🌶️", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
                 
                 (3, "Паштет з артишоку", 290, "паштети",
                  "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", None, None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+                 "банка", "🍯", None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
             ]
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_url, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_data, details)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
         
@@ -780,7 +757,7 @@ class Database:
         
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT * FROM products ORDER BY id')
+            cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
             rows = cursor.fetchall()
             
             products = []
@@ -793,8 +770,6 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
-                    "image_path": row.get('image_path'),
-                    "image_url": row.get('image_url'),
                     "details": row['details']
                 }
                 products.append(product)
@@ -806,12 +781,70 @@ class Database:
             conn.close()
     
     @staticmethod
+    def get_product_image(product_id: int):
+        """Отримує байти зображення товару з БД"""
+        conn = Database.get_connection()
+        if not conn:
+            return None
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT image_data FROM products WHERE id = %s', (product_id,))
+            row = cursor.fetchone()
+            if row and row['image_data']:
+                return row['image_data']
+            return None
+        except Exception as e:
+            logger.error(f"Помилка отримання зображення товару: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    @staticmethod
     def get_product_by_id(product_id: int):
         products = Database.get_all_products()
         for product in products:
             if product["id"] == product_id:
                 return product
         return None
+    
+    @staticmethod
+    def update_product_image(product_id: int, image_data: bytes) -> bool:
+        """Оновлює зображення товару в БД"""
+        conn = Database.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE products SET image_data = %s WHERE id = %s', (psycopg2.Binary(image_data), product_id))
+            conn.commit()
+            logger.info(f"✅ Зображення товару #{product_id} оновлено в БД")
+            return True
+        except Exception as e:
+            logger.error(f"Помилка оновлення зображення товару: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def delete_product_image(product_id: int) -> bool:
+        """Видаляє зображення товару з БД"""
+        conn = Database.get_connection()
+        if not conn:
+            return False
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute('UPDATE products SET image_data = NULL WHERE id = %s', (product_id,))
+            conn.commit()
+            logger.info(f"✅ Зображення товару #{product_id} видалено з БД")
+            return True
+        except Exception as e:
+            logger.error(f"Помилка видалення зображення товару: {e}")
+            return False
+        finally:
+            conn.close()
     
     @staticmethod
     def get_user_orders(user_id: int) -> List[Dict]:
@@ -858,11 +891,7 @@ class Database:
             conn.close()
 
 def get_product_by_id(product_id: int):
-    products = Database.get_all_products()
-    for product in products:
-        if product["id"] == product_id:
-            return product
-    return None
+    return Database.get_product_by_id(product_id)
 
 def get_products_from_db():
     return Database.get_all_products()
@@ -898,6 +927,148 @@ COMPANY_INFO = {
         "🚚 Доставка: Новою Поштою по всій Україні"
     ]
 }
+
+# ============== СЛУЖБОВІ КОМАНДИ ДЛЯ АДМІНІВ ==============
+
+async def is_admin_user(user_id: int) -> bool:
+    """Перевіряє чи є користувач адміністратором"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
+        count = cursor.fetchone()['count']
+        return count > 0
+    except Exception as e:
+        logger.error(f"Помилка перевірки адміна: {e}")
+        return False
+    finally:
+        conn.close()
+
+async def setphoto_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для встановлення фото товару (тільки для адмінів)"""
+    user = update.effective_user
+    user_id = user.id
+    
+    # Перевіряємо чи користувач адмін
+    if not await is_admin_user(user_id):
+        logger.warning(f"❌ Користувач {user_id} спробував використати адмін-команду")
+        return  # Ніякої відповіді звичайним користувачам
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Вкажіть ID товару. Приклад: /setphoto 1")
+        return
+    
+    try:
+        product_id = int(args[0])
+        product = get_product_by_id(product_id)
+        if not product:
+            await update.message.reply_text(f"❌ Товар з ID {product_id} не знайдено")
+            return
+        
+        # Зберігаємо в контексті, що цей адмін зараз встановлює фото для цього товару
+        context.user_data['setphoto_product_id'] = product_id
+        context.user_data['setphoto_mode'] = 'waiting'
+        
+        await update.message.reply_text(
+            f"📸 Встановлення фото для товару #{product_id} - {product['name']}\n\n"
+            f"Надішліть фото файлом або введіть URL зображення.\n"
+            f"Для скасування введіть /cancel",
+            parse_mode='HTML'
+        )
+    except ValueError:
+        await update.message.reply_text("❌ ID товару має бути числом")
+
+async def handle_admin_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробляє фото від адміна для встановлення на товар"""
+    user = update.effective_user
+    user_id = user.id
+    
+    # Перевіряємо чи є активна сесія встановлення фото
+    if 'setphoto_product_id' not in context.user_data:
+        return
+    
+    # Перевіряємо чи користувач адмін
+    if not await is_admin_user(user_id):
+        logger.warning(f"❌ Користувач {user_id} спробував надіслати фото для товару")
+        return
+    
+    product_id = context.user_data['setphoto_product_id']
+    product = get_product_by_id(product_id)
+    
+    if update.message.photo:
+        # Отримуємо файл з найбільшою роздільною здатністю
+        file_id = update.message.photo[-1].file_id
+        file = await context.bot.get_file(file_id)
+        file_bytes = await file.download_as_bytearray()
+        
+        # Зберігаємо в БД
+        if Database.update_product_image(product_id, bytes(file_bytes)):
+            await update.message.reply_text(
+                f"✅ Фото для товару #{product_id} - {product['name']} успішно збережено!",
+                reply_markup=get_main_menu()
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Помилка при збереженні фото",
+                reply_markup=get_main_menu()
+            )
+        
+        # Очищаємо сесію
+        del context.user_data['setphoto_product_id']
+        del context.user_data['setphoto_mode']
+
+async def handle_admin_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробляє URL від адміна для встановлення на товар"""
+    user = update.effective_user
+    user_id = user.id
+    text = update.message.text.strip()
+    
+    # Перевіряємо чи є активна сесія встановлення фото
+    if 'setphoto_product_id' not in context.user_data:
+        return
+    
+    # Перевіряємо чи користувач адмін
+    if not await is_admin_user(user_id):
+        logger.warning(f"❌ Користувач {user_id} спробував надіслати URL для товару")
+        return
+    
+    # Перевіряємо чи це схоже на URL
+    if not (text.startswith('http://') or text.startswith('https://')):
+        await update.message.reply_text("❌ Будь ласка, надішліть правильний URL (починається з http:// або https://)")
+        return
+    
+    product_id = context.user_data['setphoto_product_id']
+    product = get_product_by_id(product_id)
+    
+    # Завантажуємо зображення за URL
+    await update.message.reply_text("⏰ Завантажую зображення...")
+    
+    try:
+        import requests
+        response = requests.get(text, timeout=30)
+        response.raise_for_status()
+        
+        # Зберігаємо в БД
+        if Database.update_product_image(product_id, response.content):
+            await update.message.reply_text(
+                f"✅ Фото для товару #{product_id} - {product['name']} успішно збережено!",
+                reply_markup=get_main_menu()
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Помилка при збереженні фото",
+                reply_markup=get_main_menu()
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Помилка завантаження зображення: {e}")
+    
+    # Очищаємо сесію
+    del context.user_data['setphoto_product_id']
+    del context.user_data['setphoto_mode']
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
     keyboard = []
@@ -1224,6 +1395,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
+    
+    # Очищаємо будь-які активні сесії
+    if 'setphoto_product_id' in context.user_data:
+        del context.user_data['setphoto_product_id']
+        del context.user_data['setphoto_mode']
+        await update.message.reply_text("❌ Встановлення фото скасовано", reply_markup=get_main_menu())
+    
     Database.clear_user_session(user_id)
     welcome = get_welcome_text()
     await update.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
@@ -1313,32 +1491,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             product = get_product_by_id(product_id)
             product_text = get_product_text(product_id)
             
-            logger.info(f"📦 Відкрито товар #{product_id}, image_path={product.get('image_path') if product else None}")
+            logger.info(f"📦 Відкрито товар #{product_id}")
             
-            # Перевіряємо чи є локальний файл
-            if product and product.get('image_path'):
+            # Отримуємо зображення з БД
+            image_data = Database.get_product_image(product_id)
+            
+            if image_data:
                 try:
-                    # Перевіряємо чи файл існує
-                    if os.path.exists(product['image_path']):
-                        logger.info(f"📸 Відправляємо фото з файлу: {product['image_path']}")
-                        with open(product['image_path'], 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=product_text,
-                                parse_mode='HTML',
-                                reply_markup=get_product_detail_menu(product_id)
-                            )
-                        await query.message.delete()
-                        Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                        return
-                    else:
-                        logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
-                        # ТІЛЬКИ логуємо, але НЕ очищаємо БД
+                    from io import BytesIO
+                    photo = BytesIO(image_data)
+                    logger.info(f"📸 Відправляємо фото з БД для товару #{product_id}")
+                    
+                    await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo,
+                        caption=product_text,
+                        parse_mode='HTML',
+                        reply_markup=get_product_detail_menu(product_id)
+                    )
+                    await query.message.delete()
+                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
+                    return
                 except Exception as e:
-                    logger.error(f"❌ Помилка відкриття файлу: {e}")
+                    logger.error(f"❌ Помилка відправки фото з БД: {e}")
             
-            # Якщо нічого не спрацювало, відправляємо тільки текст
+            # Якщо немає фото, відправляємо тільки текст
             await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
             
             Database.save_user_session(user_id, last_section=f"product_{product_id}")
@@ -1617,6 +1794,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         Database.save_user(user_id, user.first_name, user.last_name or "", user.username or "")
         
+        # Спочатку перевіряємо чи це не команда для адміна
+        if text.startswith('/'):
+            # Адмін-команди обробляються окремо
+            return
+        
+        # Перевіряємо чи є активна сесія для адміна
+        if 'setphoto_product_id' in context.user_data:
+            await handle_admin_url(update, context)
+            return
+        
+        # Звичайна обробка повідомлень
         if text == "/start" or text == "/cancel" or text.lower() == "скасувати":
             Database.clear_user_session(user_id)
             welcome = get_welcome_text()
@@ -1963,12 +2151,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Помилка в обробнику помилок: {e}")
 
-async def refresh_products_periodically():
-    """Періодичне оновлення списку товарів"""
-    while True:
-        refresh_products()
-        await asyncio.sleep(10)  # Оновлювати кожні 10 секунд
-
 def main():
     try:
         if not check_single_instance():
@@ -2001,18 +2183,20 @@ def main():
         
         application = Application.builder().token(TOKEN).build()
         
+        # Звичайні команди
         application.add_handler(CommandHandler("start", start))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("cancel", cancel_command))
+        
+        # Адмін-команди (тільки для адмінів)
+        application.add_handler(CommandHandler("setphoto", setphoto_command))
+        
+        # Обробники
         application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(MessageHandler(filters.PHOTO, handle_admin_photo))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         
         application.add_error_handler(error_handler)
-        
-        # Запускаємо періодичне оновлення товарів
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.create_task(refresh_products_periodically())
         
         logger.info("🚀 Запуск polling...")
         application.run_polling(
@@ -2034,4 +2218,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
