@@ -61,9 +61,6 @@ def format_kyiv_time(dt_str):
     except:
         return str(dt_str)[:16]
 
-import os
-import sys
-
 # Діагностика
 print("📂 Поточна папка:", os.getcwd())
 print("📄 Файли в папці:", os.listdir('.'))
@@ -84,7 +81,6 @@ try:
 except ImportError:
     print("❌ requests не встановлено")
     
-    # Спробуємо встановити прямо зараз
     import subprocess
     print("📦 Встановлюю requests...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
@@ -109,9 +105,10 @@ if not DATABASE_URL:
     logger.error("DATABASE_URL не знайдено!")
     sys.exit(1)
 
+# СПІЛЬНА ПАПКА ДЛЯ ЗОБРАЖЕНЬ
 IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
-print(f"📁 Папка для зображень: {IMAGE_DIR}")
+print(f"📁 Спільна папка для зображень: {IMAGE_DIR}")
 
 def get_db_connection():
     try:
@@ -224,7 +221,7 @@ def init_database_if_empty():
                 unit TEXT DEFAULT 'банка',
                 image TEXT DEFAULT '🥫',
                 image_path TEXT,
-                image_file_id TEXT,
+                image_url TEXT,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -239,6 +236,7 @@ def init_database_if_empty():
             )
         ''')
         
+        # Додаємо нові колонки якщо їх немає
         try:
             cursor.execute('ALTER TABLE quick_orders ADD COLUMN IF NOT EXISTS message TEXT')
         except:
@@ -250,9 +248,10 @@ def init_database_if_empty():
             pass
         
         try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_file_id TEXT')
-        except:
-            pass
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
+            logger.info("✅ Колонка image_url додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки image_url: {e}")
         
         cursor.execute("SELECT COUNT(*) FROM products")
         count = cursor.fetchone()['count']
@@ -274,7 +273,7 @@ def init_database_if_empty():
             
             for product in products:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_file_id, details)
+                    INSERT INTO products (id, name, price, category, description, unit, image, image_path, image_url, details)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                 ''', product)
@@ -302,42 +301,57 @@ broadcast_in_progress = {}
 def is_authenticated(user_id: int) -> bool:
     return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
 
-async def download_telegram_file(file_id: str, bot: Bot) -> str:
+async def download_telegram_file(file_id: str, bot: Bot, product_id: int) -> str:
+    """Завантажує файл з Telegram і зберігає в спільну папку"""
     try:
         file = await bot.get_file(file_id)
-        file_path = os.path.join(IMAGE_DIR, f"{file_id}.jpg")
+        filename = f"product_{product_id}.jpg"
+        file_path = os.path.join(IMAGE_DIR, filename)
         await file.download_to_drive(file_path)
+        logger.info(f"✅ Фото збережено в спільну папку: {file_path}")
         return file_path
     except Exception as e:
         logger.error(f"Помилка завантаження файлу: {e}")
         return None
 
-async def download_image_from_url(url: str) -> tuple:
-    """
-    Завантажує зображення за URL і повертає (file_path, None)
-    """
-    logger.info(f"🌐 Спроба завантажити URL: {url}")
+async def download_image_from_url(url: str, product_id: int) -> str:
+    """Завантажує зображення за URL і зберігає в спільну папку"""
+    logger.info(f"🌐 Спроба завантажити URL: {url} для товару {product_id}")
     
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         response = requests.get(url, timeout=30, allow_redirects=True, headers=headers)
         response.raise_for_status()
         
-        # Створюємо тимчасовий файл
-        filename = f"temp_{int(time.time())}.jpg"
+        filename = f"product_{product_id}.jpg"
         file_path = os.path.join(IMAGE_DIR, filename)
         
         with open(file_path, 'wb') as f:
             f.write(response.content)
         
-        logger.info(f"✅ Зображення тимчасово збережено: {file_path} (розмір: {len(response.content)} байт)")
-        return file_path, None
+        logger.info(f"✅ Зображення збережено в спільну папку: {file_path}")
+        return file_path
         
     except Exception as e:
-        logger.error(f"❌ Помилка завантаження зображення за URL {url}: {e}")
-        return None, None
+        logger.error(f"❌ Помилка завантаження зображення: {e}")
+        return None
+
+def delete_product_image(product_id: int) -> bool:
+    """Видаляє файл зображення товару зі спільної папки"""
+    filename = f"product_{product_id}.jpg"
+    file_path = os.path.join(IMAGE_DIR, filename)
+    
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            logger.info(f"✅ Видалено файл зображення: {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Помилка видалення файлу: {e}")
+            return False
+    return True
 
 async def reset_all_orders():
     conn = get_db_connection()
@@ -1370,7 +1384,7 @@ def update_product(product_id: int, **kwargs):
     finally:
         conn.close()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_path: str, image_file_id: str, details: str):
+def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, image_path: str, image_url: str, details: str):
     logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
@@ -1381,10 +1395,10 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, image_path, image_file_id, details)
+            INSERT INTO products (name, price, category, description, unit, image, image_path, image_url, details)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        ''', (name, price, category, description, unit, image, image_path, image_file_id, details))
+        ''', (name, price, category, description, unit, image, image_path, image_url, details))
         
         result = cursor.fetchone()
         product_id = result['id'] if result else None
@@ -2189,6 +2203,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("✏️ Редагування товару\n\nОберіть товар для редагування:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
+        # ============== ОБРОБНИКИ ДЛЯ ФОТО ==============
+        
+        # Видалення фото
         elif data.startswith("delete_product_image_"):
             logger.info(f"🔄 Натиснуто кнопку delete_product_image_, data: {data}")
             try:
@@ -2205,6 +2222,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text(f"❌ Помилка: товар з ID {product_id} не знайдено", reply_markup=get_products_menu())
                 return
             
+            # Видаляємо файл зображення зі спільної папки
             if product and product.get('image_path'):
                 try:
                     if os.path.exists(product['image_path']):
@@ -2213,7 +2231,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 except Exception as e:
                     logger.error(f"Помилка видалення файлу: {e}")
             
-            if update_product(product_id, image_path=None, image_file_id=None):
+            # Очищаємо поля зображення в БД
+            if update_product(product_id, image_path=None, image_url=None):
                 await query.edit_message_text(
                     f"✅ Фото товару #{product_id} видалено!",
                     reply_markup=get_back_keyboard(f"edit_product_{product_id}")
@@ -2225,9 +2244,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
         
-        # ============== 2. ОБРОБНИКИ З КОНКРЕТНИМИ ПРЕФІКСАМИ ==============
-        
-        # Специфічні обробники для фото
+        # Вибір завантаження за URL
         elif data.startswith("edit_product_image_url_"):
             try:
                 product_id = int(data.split("_")[-1])
@@ -2246,6 +2263,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
         
+        # Вибір завантаження файлом
         elif data.startswith("edit_product_image_file_"):
             try:
                 product_id = int(data.split("_")[-1])
@@ -2280,7 +2298,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if field == "image":
                 product = get_product_by_id(product_id)
-                has_image = product and (product.get('image_path') is not None or product.get('image_file_id') is not None)
+                has_image = product and (product.get('image_path') is not None or product.get('image_url') is not None)
                 admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_image", "product_id": product_id}
                 await query.edit_message_text(
                     "📷 Виберіть спосіб завантаження фото:",
@@ -2293,12 +2311,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
             return
         
-        # ============== 3. ЗАГАЛЬНИЙ ОБРОБНИК edit_product_ ==============
-        
+        # Загальний обробник edit_product_
         elif data.startswith("edit_product_"):
             logger.info(f"📝 Натиснуто загальний edit_product_ з data: {data}")
             
-            # ПЕРЕВІРКА: чи це не специфічний варіант з додатковими словами
             if data.count("_") > 2:
                 logger.warning(f"⚠️ Пропускаємо складний callback у загальному обробнику: {data}")
                 return
@@ -2330,8 +2346,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # ============== 4. ІНШІ ОБРОБНИКИ ==============
-        
+        # Інші обробники (замовлення, клієнти, повідомлення, тощо)
         elif data == "admin_product_delete":
             products = get_all_products()
             if not products:
@@ -3425,14 +3440,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "add_product_image_upload":
             if update.message.photo:
                 file_id = update.message.photo[-1].file_id
-                # Зберігаємо тільки file_id, локально не зберігаємо
-                admin_sessions[user_id]["product_image_file_id"] = file_id
-                admin_sessions[user_id]["product_image_path"] = None
+                # Завантажуємо фото в спільну папку
+                image_path = await download_telegram_file(file_id, context.bot, session.get("product_id", 0))
+                admin_sessions[user_id]["product_image_path"] = image_path
                 admin_sessions[user_id]["action"] = "add_product_details"
                 await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             elif text.lower() == "пропустити" or text == "-":
                 admin_sessions[user_id]["product_image_path"] = None
-                admin_sessions[user_id]["product_image_file_id"] = None
                 admin_sessions[user_id]["action"] = "add_product_details"
                 await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             else:
@@ -3447,8 +3461,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "description": session.get("product_description"),
                 "unit": session.get("product_unit"),
                 "image": session.get("product_image"),
-                "image_path": None,  # Не зберігаємо локально
-                "image_file_id": session.get("product_image_file_id"),
+                "image_path": session.get("product_image_path"),
+                "image_url": None,
                 "details": text
             }
             
@@ -3465,7 +3479,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-        # ============== НОВІ ОБРОБНИКИ ДЛЯ ФОТО ==============
+        # ============== ОБРОБНИКИ ДЛЯ ФОТО ==============
         
         elif action == "edit_product_image_url":
             product_id = session.get("product_id")
@@ -3477,59 +3491,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 admin_sessions[user_id].pop("action", None)
                 return
             
-            # Завантажуємо зображення за URL тимчасово
-            temp_image_path, _ = await download_image_from_url(text)
+            # Завантажуємо зображення за URL в спільну папку
+            image_path = await download_image_from_url(text, product_id)
             
-            if temp_image_path:
-                try:
-                    # Відправляємо це фото в Telegram, щоб отримати file_id
-                    with open(temp_image_path, 'rb') as photo:
-                        sent_message = await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🖼️ Тимчасове фото для отримання file_id"
-                        )
-                    
-                    # Отримуємо file_id
-                    file_id = sent_message.photo[-1].file_id
-                    logger.info(f"✅ Отримано file_id: {file_id}")
-                    
-                    # Видаляємо тимчасове повідомлення
-                    await context.bot.delete_message(chat_id=user_id, message_id=sent_message.message_id)
-                    
-                    # Видаляємо старе фото, якщо є (локальний файл)
-                    old_product = get_product_by_id(product_id)
-                    if old_product and old_product.get('image_path'):
-                        try:
-                            if os.path.exists(old_product['image_path']):
-                                os.remove(old_product['image_path'])
-                                logger.info(f"Видалено старе фото: {old_product['image_path']}")
-                        except Exception as e:
-                            logger.error(f"Помилка видалення старого фото: {e}")
-                    
-                    # Видаляємо тимчасовий файл
+            if image_path:
+                # Видаляємо старе фото, якщо є
+                old_product = get_product_by_id(product_id)
+                if old_product and old_product.get('image_path') and os.path.exists(old_product['image_path']):
                     try:
-                        if os.path.exists(temp_image_path):
-                            os.remove(temp_image_path)
-                            logger.info(f"Видалено тимчасовий файл: {temp_image_path}")
+                        if old_product['image_path'] != image_path:
+                            os.remove(old_product['image_path'])
+                            logger.info(f"Видалено старе фото: {old_product['image_path']}")
                     except Exception as e:
-                        logger.error(f"Помилка видалення тимчасового файлу: {e}")
-                    
-                    # Оновлюємо товар в БД - зберігаємо ТІЛЬКИ file_id, image_path = None
-                    if update_product(product_id, image_file_id=file_id, image_path=None):
-                        await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено! (збережено file_id)", reply_markup=get_products_menu())
-                    else:
-                        await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
-                        
-                except Exception as e:
-                    logger.error(f"❌ Помилка при отриманні file_id: {e}")
-                    # Видаляємо тимчасовий файл у разі помилки
-                    try:
-                        if os.path.exists(temp_image_path):
-                            os.remove(temp_image_path)
-                    except:
-                        pass
-                    await update.message.reply_text("❌ Помилка при обробці фото. Спробуйте інший спосіб.", reply_markup=get_products_menu())
+                        logger.error(f"Помилка видалення старого фото: {e}")
+                
+                # Оновлюємо товар в БД
+                if update_product(product_id, image_path=image_path, image_url=None):
+                    await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено за URL!\nФото збережено в спільній папці.", reply_markup=get_products_menu())
+                else:
+                    await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
             else:
                 await update.message.reply_text("❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", 
                                                reply_markup=get_products_menu())
@@ -3551,21 +3531,27 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 file_id = update.message.photo[-1].file_id
                 logger.info(f"📸 Отримано file_id: {file_id}")
                 
-                # Видаляємо старе фото, якщо воно було збережене локально
-                old_product = get_product_by_id(product_id)
-                if old_product and old_product.get('image_path'):
-                    try:
-                        if os.path.exists(old_product['image_path']):
-                            os.remove(old_product['image_path'])
-                            logger.info(f"🗑 Видалено старий файл: {old_product['image_path']}")
-                    except Exception as e:
-                        logger.error(f"Помилка видалення старого файлу: {e}")
+                # Завантажуємо фото в спільну папку
+                image_path = await download_telegram_file(file_id, context.bot, product_id)
                 
-                # Оновлюємо товар в БД - зберігаємо ТІЛЬКИ file_id, image_path = None
-                if update_product(product_id, image_file_id=file_id, image_path=None):
-                    await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено! (збережено file_id)", reply_markup=get_products_menu())
+                if image_path:
+                    # Видаляємо старе фото, якщо є
+                    old_product = get_product_by_id(product_id)
+                    if old_product and old_product.get('image_path') and os.path.exists(old_product['image_path']):
+                        try:
+                            if old_product['image_path'] != image_path:
+                                os.remove(old_product['image_path'])
+                                logger.info(f"🗑 Видалено старий файл: {old_product['image_path']}")
+                        except Exception as e:
+                            logger.error(f"Помилка видалення старого файлу: {e}")
+                    
+                    # Оновлюємо товар в БД
+                    if update_product(product_id, image_path=image_path, image_url=None):
+                        await update.message.reply_text(f"✅ Фото товару #{product_id} оновлено!\nФото збережено в спільній папці.", reply_markup=get_products_menu())
+                    else:
+                        await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
                 else:
-                    await update.message.reply_text("❌ Помилка при оновленні фото в базі даних", reply_markup=get_products_menu())
+                    await update.message.reply_text("❌ Помилка при завантаженні фото", reply_markup=get_products_menu())
             else:
                 await update.message.reply_text("❌ Будь ласка, надішліть фото", reply_markup=get_back_keyboard("products"))
                 return
