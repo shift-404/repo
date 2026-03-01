@@ -50,6 +50,13 @@ IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "product_im
 os.makedirs(IMAGE_DIR, exist_ok=True)
 print(f"📁 Спільна папка для зображень: {IMAGE_DIR}")
 
+# Додайте це для встановлення правильних прав доступу
+try:
+    os.chmod(IMAGE_DIR, 0o777)  # Повний доступ до папки
+    print("✅ Права доступу до папки встановлено")
+except Exception as e:
+    print(f"⚠️ Помилка встановлення прав: {e}")
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
@@ -2027,3 +2034,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
