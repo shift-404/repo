@@ -1616,7 +1616,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             
             quick_order_text = get_quick_order_text(product_id)
-            await query.edit_message_text(quick_order_text, reply_markup=get_quick_order_menu(product_id), parse_mode='HTML')
+            
+            # Перевіряємо чи повідомлення має медіа (фото)
+            if query.message.photo:
+                # Якщо це фото, відправляємо нове повідомлення
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=quick_order_text,
+                    reply_markup=get_quick_order_menu(product_id),
+                    parse_mode='HTML'
+                )
+                # Видаляємо старе повідомлення з фото
+                await query.message.delete()
+            else:
+                # Якщо звичайне текстове повідомлення - редагуємо
+                await query.edit_message_text(
+                    quick_order_text, 
+                    reply_markup=get_quick_order_menu(product_id), 
+                    parse_mode='HTML'
+                )
+            
             Database.save_user_session(user_id, last_section=f"quick_order_{product_id}")
             return
         
@@ -2264,3 +2283,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
