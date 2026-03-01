@@ -303,6 +303,17 @@ async def download_image_from_url_to_bytes(url: str) -> bytes:
         logger.error(f"❌ Помилка завантаження зображення: {e}")
         return None
 
+async def download_telegram_file_to_bytes(file_id: str, bot: Bot) -> bytes:
+    """Завантажує файл з Telegram і повертає як байти"""
+    try:
+        file = await bot.get_file(file_id)
+        file_bytes = await file.download_as_bytearray()
+        logger.info(f"✅ Фото завантажено в пам'ять, розмір: {len(file_bytes)} байт")
+        return bytes(file_bytes)
+    except Exception as e:
+        logger.error(f"❌ Помилка завантаження файлу: {e}")
+        return None
+
 async def reset_all_orders():
     conn = get_db_connection()
     if not conn:
@@ -3895,4 +3906,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
