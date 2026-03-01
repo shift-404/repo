@@ -9,7 +9,6 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import asyncio
-import requests
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
@@ -190,8 +189,9 @@ def init_database():
         
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT')
-        except:
-            pass
+            logger.info("✅ Колонка image_url додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки image_url: {e}")
         
         cursor.execute("SELECT COUNT(*) FROM products")
         count = cursor.fetchone()['count']
@@ -1328,22 +1328,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         logger.warning(f"⚠️ Файл не знайдено: {product['image_path']}")
                 except Exception as e:
                     logger.error(f"❌ Помилка відкриття файлу: {e}")
-            
-            # Якщо є URL, пробуємо відправити через нього
-            elif product and product.get('image_url'):
-                try:
-                    await context.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=product['image_url'],
-                        caption=product_text,
-                        parse_mode='HTML',
-                        reply_markup=get_product_detail_menu(product_id)
-                    )
-                    await query.message.delete()
-                    Database.save_user_session(user_id, last_section=f"product_{product_id}")
-                    return
-                except Exception as e:
-                    logger.error(f"❌ Помилка відправки фото з URL: {e}")
             
             # Якщо нічого не спрацювало, відправляємо тільки текст
             await query.edit_message_text(product_text, reply_markup=get_product_detail_menu(product_id), parse_mode='HTML')
