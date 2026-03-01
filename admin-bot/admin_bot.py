@@ -3419,21 +3419,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Завантажуємо зображення за URL
             image_bytes = await download_image_from_url_to_bytes(text)
             
-        if image_bytes:
-            # Оновлюємо товар в БД - зберігаємо байти
-            if update_product(product_id, image_data=image_bytes):
-                await update.message.reply_text(
-                    f"✅ Фото товару #{product_id} оновлено! (збережено в БД)", 
-                    reply_markup=get_products_menu()
-                )
+            if image_bytes:
+                # Оновлюємо товар в БД - зберігаємо байти
+                if update_product(product_id, image_data=image_bytes):
+                    await update.message.reply_text(
+                        f"✅ Фото товару #{product_id} оновлено! (збережено в БД)", 
+                        reply_markup=get_products_menu()
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при оновленні фото в базі даних", 
+                        reply_markup=get_products_menu()
+                    )
             else:
                 await update.message.reply_text(
-                    "❌ Помилка при оновленні фото в базі даних", 
+                    "❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", 
                     reply_markup=get_products_menu()
                 )
-            else:
-                await update.message.reply_text("❌ Помилка при завантаженні зображення за URL. Перевірте посилання та спробуйте ще раз.", 
-                                               reply_markup=get_products_menu())
             
             admin_sessions[user_id].pop("action", None)
             return
@@ -3906,5 +3908,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
