@@ -2005,12 +2005,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
-    if ADMIN_IDS and user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
+    # Спочатку перевіряємо через ADMIN_IDS (перші адміни)
+    if ADMIN_IDS and user_id in ADMIN_IDS:
+        # Це перший адмін - даємо доступ
+        admin_sessions[user_id] = {"state": "waiting_password"}
+        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
         return
     
-    admin_sessions[user_id] = {"state": "waiting_password"}
-    await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
+    # Перевіряємо через базу даних
+    if is_admin(user_id):
+        admin_sessions[user_id] = {"state": "waiting_password"}
+        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
+        return
+    
+    # Якщо не пройшов жодну перевірку - доступ заборонено
+    await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
+    return
 
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -3908,6 +3918,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
