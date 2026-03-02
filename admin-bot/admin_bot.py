@@ -1454,6 +1454,25 @@ def remove_admin(user_id: int):
     finally:
         conn.close()
 
+def is_admin(user_id: int) -> bool:
+    """Перевіряє чи є користувач адміністратором в БД"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
+        result = cursor.fetchone()
+        count = result['count'] if result else 0
+        return count > 0
+    except Exception as e:
+        logger.error(f"Помилка перевірки адміна: {e}")
+        logger.error(traceback.format_exc())
+        return False
+    finally:
+        conn.close()
+
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
@@ -3923,6 +3942,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
