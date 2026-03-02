@@ -1454,22 +1454,27 @@ def remove_admin(user_id: int):
     finally:
         conn.close()
 
-def is_admin(user_id: int) -> bool:
-    conn = get_db_connection()
-    if not conn:
-        return False
+async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    text = update.message.text.strip()
     
-    try:
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM admins WHERE user_id = %s', (user_id,))
-        count = cursor.fetchone()['count']
-        return count > 0
-    except Exception as e:
-        logger.error(f"Помилка перевірки адміна: {e}")
-        logger.error(traceback.format_exc())
-        return False
-    finally:
-        conn.close()
+    if user_id not in admin_sessions or admin_sessions[user_id].get("state") != "waiting_password":
+        return
+    
+    if text == ADMIN_PASSWORD:
+        admin_sessions[user_id] = {"state": "authenticated", "authenticated_at": get_kyiv_time().isoformat()}
+        last_password_check[user_id] = get_kyiv_time()
+        
+        # Додаємо в базу даних, якщо ще не адмін
+        if not is_admin(user_id):
+            add_admin(user_id, user.username or "", user_id)
+            logger.info(f"✅ Нового адміна {user_id} додано до БД")
+        
+        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво просимо до адмін-панелі.", reply_markup=get_main_menu())
+    else:
+        await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
+        admin_sessions.pop(user_id, None)
 
 def generate_orders_report(orders: list, format: str = "txt"):
     if format == "txt":
@@ -3918,6 +3923,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
