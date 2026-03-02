@@ -3713,22 +3713,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-elif action == "add_admin":
-    try:
-        new_admin_id = int(text)
-        # Додаємо адміна в БД
-        if add_admin(new_admin_id, "", user_id):
-            await update.message.reply_text(
-                f"✅ Користувача з ID {new_admin_id} додано до адмінів!\n\n"
-                f"Тепер він може увійти в адмін-бот за паролем.",
-                reply_markup=get_admins_menu()
-            )
-        else:
-            await update.message.reply_text("❌ Помилка при додаванні адміна", reply_markup=get_admins_menu())
-    except ValueError:
-        await update.message.reply_text("❌ Введіть коректний числовий ID", reply_markup=get_admins_menu())
-    admin_sessions[user_id].pop("action", None)
-    return
+        elif action == "add_admin":
+            try:
+                new_admin_id = int(text)
+                # Додаємо адміна в БД
+                if add_admin(new_admin_id, "", user_id):
+                    await update.message.reply_text(
+                        f"✅ Користувача з ID {new_admin_id} додано до адмінів!\n\n"
+                        f"Тепер він може увійти в адмін-бот за паролем.",
+                        reply_markup=get_admins_menu()
+                    )
+                else:
+                    await update.message.reply_text("❌ Помилка при додаванні адміна", reply_markup=get_admins_menu())
+            except ValueError:
+                await update.message.reply_text("❌ Введіть коректний числовий ID", reply_markup=get_admins_menu())
+            admin_sessions[user_id].pop("action", None)
+            return
         
         else:
             await update.message.reply_text("❌ Невідома команда", reply_markup=get_main_menu())
@@ -3943,6 +3943,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
