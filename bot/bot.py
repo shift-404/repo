@@ -154,7 +154,6 @@ def init_database():
                 category TEXT,
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
-                image TEXT DEFAULT '🥫',
                 image_data BYTEA,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -249,9 +248,9 @@ def init_database():
 
 Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
 
-🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
-🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
-🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
+🥫 Артишок маринований з зернами гірчиці - пікантний, не гострий
+🌶️ Артишок маринований з чилі - з нотками гостроти
+🍯 Паштет з артишоку - ніжний для бутербродів
 
 <b>🏢 Про нас:</b>
 • Працюємо з 2022 року
@@ -905,7 +904,7 @@ class Database:
         
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
+            cursor.execute('SELECT id, name, price, category, description, unit, details, created_at FROM products ORDER BY id')
             rows = cursor.fetchall()
             
             products = []
@@ -917,7 +916,6 @@ class Database:
                     "category": row['category'],
                     "description": row['description'],
                     "unit": row['unit'],
-                    "image": row['image'],
                     "details": row['details']
                 }
                 products.append(product)
@@ -1232,10 +1230,15 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        button_text = f"{product['image']} {product['name']}\n{product['price']} грн/{product['unit']}"
-        # Обмежуємо довжину тексту кнопки (Telegram дозволяє до 64 символів)
+        # Формуємо текст кнопки з назвою товару та ціною на новому рядку
+        button_text = f"{product['name']}\n{product['price']} грн/{product['unit']}"
+        # Обмежуємо довжину тексту (Telegram дозволяє до 64 символів)
         if len(button_text) > 60:
-            button_text = button_text[:57] + "..."
+            # Якщо текст задовгий, скорочуємо назву
+            name_part = product['name'][:40] + "..." if len(product['name']) > 40 else product['name']
+            button_text = f"{name_part}\n{product['price']} грн/{product['unit']}"
+            if len(button_text) > 60:
+                button_text = button_text[:57] + "..."
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1363,7 +1366,7 @@ def get_product_text(product_id: int) -> str:
         return "❌ Продукт не знайдено"
     
     text = f"""
-<b>{product['image']} {product['name']}</b>
+<b>{product['name']}</b>
 
 📝 <i>{product['description']}</i>
 
@@ -1392,7 +1395,7 @@ def get_quick_order_text(product_id: int) -> str:
         return "❌ Продукт не знайдено"
     
     return f"""
-<b>⚡ Швидке замовлення: {product['image']} {product['name']}</b>
+<b>⚡ Швидке замовлення: {product['name']}</b>
 
 💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
 
