@@ -897,34 +897,39 @@ class Database:
             conn.close()
     
     @staticmethod
-    def get_all_products():
-        conn = Database.get_connection()
-        if not conn:
-            return []
+# В класі Database, метод get_all_products():
+@staticmethod
+def get_all_products():
+    conn = Database.get_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        # Додаємо image назад у запит
+        cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
+        rows = cursor.fetchall()
         
-        try:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id, name, price, category, description, unit, details, created_at FROM products ORDER BY id')
-            rows = cursor.fetchall()
-            
-            products = []
-            for row in rows:
-                product = {
-                    "id": row['id'],
-                    "name": row['name'],
-                    "price": row['price'],
-                    "category": row['category'],
-                    "description": row['description'],
-                    "unit": row['unit'],
-                    "details": row['details']
-                }
-                products.append(product)
-            return products
-        except Exception as e:
-            logger.error(f"Помилка отримання товарів: {e}")
-            return []
-        finally:
-            conn.close()
+        products = []
+        for row in rows:
+            product = {
+                "id": row['id'],
+                "name": row['name'],
+                "price": row['price'],
+                "category": row['category'],
+                "description": row['description'],
+                "unit": row['unit'],
+                "image": row['image'],  # Це поле тепер знову є
+                "details": row['details']
+            }
+            products.append(product)
+        return products
+    except Exception as e:
+        logger.error(f"Помилка отримання товарів: {e}")
+        return []
+    finally:
+        conn.close()
+
     
     @staticmethod
     def get_product_image(product_id: int):
@@ -1230,13 +1235,13 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        # Формуємо текст кнопки з назвою товару та ціною на новому рядку
-        button_text = f"{product['name']}\n{product['price']} грн/{product['unit']}"
-        # Обмежуємо довжину тексту (Telegram дозволяє до 64 символів)
+        # Додаємо емодзі перед назвою
+        emoji = product.get('image', '🥫')  # Якщо немає емодзі, використовуємо стандартне
+        button_text = f"{emoji} {product['name']}\n{product['price']} грн/{product['unit']}"
+        # Обмежуємо довжину тексту
         if len(button_text) > 60:
-            # Якщо текст задовгий, скорочуємо назву
-            name_part = product['name'][:40] + "..." if len(product['name']) > 40 else product['name']
-            button_text = f"{name_part}\n{product['price']} грн/{product['unit']}"
+            name_part = product['name'][:35] + "..." if len(product['name']) > 35 else product['name']
+            button_text = f"{emoji} {name_part}\n{product['price']} грн/{product['unit']}"
             if len(button_text) > 60:
                 button_text = button_text[:57] + "..."
         buttons.append([{
@@ -1359,14 +1364,16 @@ def get_company_text() -> str:
     # Отримуємо актуальний текст з БД
     return get_company_info()
 
+# Оновіть функцію get_product_text():
 def get_product_text(product_id: int) -> str:
     refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
     if not product:
         return "❌ Продукт не знайдено"
     
+    emoji = product.get('image', '🥫')
     text = f"""
-<b>{product['name']}</b>
+<b>{emoji} {product['name']}</b>
 
 📝 <i>{product['description']}</i>
 
@@ -1394,8 +1401,9 @@ def get_quick_order_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
+    emoji = product.get('image', '🥫')
     return f"""
-<b>⚡ Швидке замовлення: {product['name']}</b>
+<b>⚡ Швидке замовлення: {emoji} {product['name']}</b>
 
 💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
 
@@ -2404,3 +2412,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
