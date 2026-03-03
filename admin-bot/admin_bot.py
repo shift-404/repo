@@ -214,7 +214,6 @@ def init_database_if_empty():
                 category TEXT,
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
-                image TEXT DEFAULT '🥫',
                 image_data BYTEA,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -309,9 +308,9 @@ def init_database_if_empty():
 
 Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
 
-🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
-🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
-🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
+🥫 Артишок маринований з зернами гірчиці - пікантний, не гострий
+🌶️ Артишок маринований з чилі - з нотками гостроти
+🍯 Паштет з артишоку - ніжний для бутербродів
 
 <b>🏢 Про нас:</b>
 • Працюємо з 2022 року
@@ -1605,7 +1604,7 @@ def get_all_products():
     
     try:
         cursor = conn.cursor()
-        cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
+        cursor.execute('SELECT id, name, price, category, description, unit, details, created_at FROM products ORDER BY id')
         rows = cursor.fetchall()
         
         products = []
@@ -1665,7 +1664,7 @@ def update_product(product_id: int, **kwargs):
     finally:
         conn.close()
 
-def add_product(name: str, price: float, category: str, description: str, unit: str, image: str, details: str):
+def add_product(name: str, price: float, category: str, description: str, unit: str, details: str):
     logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
@@ -1676,10 +1675,10 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
     try:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO products (name, price, category, description, unit, image, details)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO products (name, price, category, description, unit, details)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
-        ''', (name, price, category, description, unit, image, details))
+        ''', (name, price, category, description, unit, details))
         
         result = cursor.fetchone()
         product_id = result['id'] if result else None
@@ -1810,7 +1809,7 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             add_admin(user_id, user.username or "", user_id)
             logger.info(f"✅ Нового адміна {user_id} додано до БД")
         
-        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво просимо до адмін-панелі.", reply_markup=get_main_menu())
+        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво прошу до адмін-панелі.", reply_markup=get_main_menu())
     else:
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
         admin_sessions.pop(user_id, None)
@@ -2434,7 +2433,7 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id):
             add_admin(user_id, user.username or "", user_id)
         
-        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво просимо до адмін-панелі.", reply_markup=get_main_menu())
+        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво прошу до адмін-панелі.", reply_markup=get_main_menu())
     else:
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
         admin_sessions.pop(user_id, None)
@@ -2475,7 +2474,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                             [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
                             [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                            [InlineKeyboardButton("🏷 Емодзі", callback_data=f"edit_field_image_emoji_{product_id}")],
                             [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
                             [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
                         ]
@@ -2483,8 +2481,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             f"✏️ Редагування товару #{product_id}\n\n"
                             f"Назва: {product['name']}\n"
                             f"Ціна: {product['price']} грн\n"
-                            f"Одиниці: {product['unit']}\n"
-                            f"Емодзі: {product['image']}\n\n"
+                            f"Одиниці: {product['unit']}\n\n"
                             f"Оберіть поле для редагування:",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
@@ -2783,7 +2780,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = "📦 Список товарів\n\n"
                 for p in products:
-                    text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн/{p['unit']}\nКатегорія: {p['category']}\nЕмодзі: {p['image']}\n{'─'*30}\n"
+                    text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн/{p['unit']}\nКатегорія: {p['category']}\n{'─'*30}\n"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -2898,13 +2895,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_product_image_keyboard(product_id, has_image)
                 )
                 return
-            elif field == "image_emoji":
-                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_image_emoji", "product_id": product_id}
-                await query.edit_message_text(
-                    f"✏️ Введіть новий емодзі для товару (наприклад: 🥫, 🌶️, 🍯):",
-                    reply_markup=get_back_keyboard("products")
-                )
-                return
             elif field == "unit":
                 admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_unit", "product_id": product_id}
                 await query.edit_message_text(
@@ -2945,7 +2935,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                 [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
                 [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                [InlineKeyboardButton("🏷 Емодзі", callback_data=f"edit_field_image_emoji_{product_id}")],
                 [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
                 [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
             ]
@@ -2953,8 +2942,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✏️ Редагування товару #{product_id}\n\n"
                 f"Назва: {product['name']}\n"
                 f"Ціна: {product['price']} грн\n"
-                f"Одиниці: {product['unit']}\n"
-                f"Емодзі: {product['image']}\n\n"
+                f"Одиниці: {product['unit']}\n\n"
                 f"Оберіть поле для редагування:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -4077,7 +4065,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action.startswith("edit_faq_question_"):
             try:
                 faq_id = int(action.split("_")[3])
-                if update_faq(faq_id, text, session.get("faq_answer", "")):
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    admin_sessions[user_id].pop("action", None)
+                    return
+                
+                if update_faq(faq_id, text, faq['answer']):
                     await update.message.reply_text(
                         f"✅ Питання FAQ #{faq_id} оновлено!",
                         reply_markup=get_faq_edit_menu(faq_id)
@@ -4087,7 +4081,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "❌ Помилка при оновленні",
                         reply_markup=get_back_keyboard("faq")
                     )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             admin_sessions[user_id].pop("action", None)
             return
@@ -4096,7 +4091,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 faq_id = int(action.split("_")[3])
                 faq = get_faq_by_id(faq_id)
-                if faq and update_faq(faq_id, faq['question'], text):
+                if not faq:
+                    await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    admin_sessions[user_id].pop("action", None)
+                    return
+                
+                if update_faq(faq_id, faq['question'], text):
                     await update.message.reply_text(
                         f"✅ Відповідь FAQ #{faq_id} оновлено!",
                         reply_markup=get_faq_edit_menu(faq_id)
@@ -4106,7 +4106,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "❌ Помилка при оновленні",
                         reply_markup=get_back_keyboard("faq")
                     )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             admin_sessions[user_id].pop("action", None)
             return
@@ -4143,12 +4144,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif action == "add_product_unit":
             admin_sessions[user_id]["product_unit"] = text
-            admin_sessions[user_id]["action"] = "add_product_image"
-            await update.message.reply_text("Введіть емодзі для товару (наприклад: 🥫, 🌶️, 🍯):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_image":
-            admin_sessions[user_id]["product_image"] = text
             admin_sessions[user_id]["action"] = "add_product_details"
             await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
             return
@@ -4160,7 +4155,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "category": session.get("product_category"),
                 "description": session.get("product_description"),
                 "unit": session.get("product_unit"),
-                "image": session.get("product_image"),
                 "details": text
             }
             
@@ -4168,7 +4162,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if product_id:
                 await update.message.reply_text(
-                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн\nОдиниці: {product_data['unit']}\nЕмодзі: {product_data['image']}",
+                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн\nОдиниці: {product_data['unit']}",
                     reply_markup=get_products_menu()
                 )
             else:
@@ -4178,15 +4172,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # ============== ОБРОБНИКИ ДЛЯ РЕДАГУВАННЯ ТОВАРУ ==============
-        
-        elif action == "edit_product_image_emoji":
-            product_id = session.get("product_id")
-            if update_product(product_id, image=text):
-                await update.message.reply_text(f"✅ Емодзі товару #{product_id} оновлено!", reply_markup=get_products_menu())
-            else:
-                await update.message.reply_text("❌ Помилка при оновленні емодзі", reply_markup=get_products_menu())
-            admin_sessions[user_id].pop("action", None)
-            return
         
         elif action == "edit_product_unit":
             product_id = session.get("product_id")
