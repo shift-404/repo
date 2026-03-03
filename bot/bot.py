@@ -170,6 +170,27 @@ def init_database():
             )
         ''')
         
+        # ========== ТАБЛИЦІ ДЛЯ КОНТЕНТУ ==========
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS company_info (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                text TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by BIGINT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS faq (
+                id SERIAL PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                position INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Додаємо колонку image_data якщо її немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
@@ -177,30 +198,51 @@ def init_database():
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image_data: {e}")
         
-        cursor.execute("SELECT COUNT(*) FROM products")
-        count = cursor.fetchone()['count']
+        # Додаємо початкові дані для company_info, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM company_info")
+        company_count = cursor.fetchone()['count']
         
-        if count == 0:
-            products = [
-                (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
-                
-                (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
-                
-                (3, "Паштет з артишоку", 290, "паштети",
-                 "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+        if company_count == 0:
+            company_text = """
+<b>🌱 Компанія Бонелет</b>
+
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.
+
+<b>📋 Деталі:</b>
+• 👨‍🌾 Працюємо з 2022 року
+• 📍 Розташування: Одеська область, с. Великий Дальник
+• 📞 Телефон: +380932599103
+• 🕒 Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00
+• 🚚 Доставка: Новою Поштою по всій Україні
+
+<b>🌿 Наша філософія:</b>
+• Вирощуємо на власних полях Одещини
+• Використовуємо натуральне консервування
+• Гарантуємо якість кожного продукту
+• Працюємо з любов'ю до природи
+
+<b>🚚 Доставка:</b>
+• Новою Поштою по всій Україні
+• Самовивіз з Одеської області, с. Великий Дальник
+• Терміни доставки: 1-4 дні в залежності від регіону
+"""
+            cursor.execute('''
+                INSERT INTO company_info (id, text) VALUES (1, %s)
+            ''', (company_text,))
+        
+        # Додаємо початкові FAQ, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM faq")
+        faq_count = cursor.fetchone()['count']
+        
+        if faq_count == 0:
+            faqs = [
+                ("Які способи оплати ви приймаєте?", "✅ Готівка при отриманні\n✅ Переказ на карту ПриватБанку\n✅ Оплата через LiqPay", 0),
+                ("Які терміни доставки?", "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів", 1)
             ]
-            
-            for product in products:
+            for question, answer, position in faqs:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_data, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                ''', product)
+                    INSERT INTO faq (question, answer, position) VALUES (%s, %s, %s)
+                ''', (question, answer, position))
         
         conn.commit()
         logger.info("✅ База даних PostgreSQL ініціалізована")
@@ -210,6 +252,44 @@ def init_database():
         return False
     finally:
         conn.close()
+
+# ========== ФУНКЦІЇ ДЛЯ РОБОТИ З КОНТЕНТОМ ==========
+
+def get_company_info() -> str:
+    """Отримує текст про компанію з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return "Помилка отримання даних"
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT text FROM company_info WHERE id = 1')
+        row = cursor.fetchone()
+        return row['text'] if row else "Інформацію не знайдено"
+    except Exception as e:
+        logger.error(f"Помилка отримання company_info: {e}")
+        return "Помилка отримання даних"
+    finally:
+        conn.close()
+
+def get_all_faqs() -> List[Dict]:
+    """Отримує всі FAQ з БД, відсортовані за позицією"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, question, answer, position FROM faq ORDER BY position, id')
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Помилка отримання faq: {e}")
+        return []
+    finally:
+        conn.close()
+
+# ========== РЕШТА КОДУ З ВАШОГО bot.py ==========
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
@@ -907,30 +987,17 @@ def refresh_products():
 
 refresh_products()
 
-FAQS = [
-    {
-        "question": "Які способи оплати ви приймаєте?",
-        "answer": "✅ Готівка при отриманні\n✅ Переказ на карту ПриватБанку\n✅ Оплата через LiqPay"
-    },
-    {
-        "question": "Які терміни доставки?",
-        "answer": "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів"
-    }
-]
+# ========== ЗАМІНА ЛОКАЛЬНИХ ЗМІННИХ НА ФУНКЦІЇ З БД ==========
 
-COMPANY_INFO = {
-    "name": "🌱 Компанія Бонелет",
-    "description": "Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.",
-    "details": [
-        "👨‍🌾 Працюємо з 2022 року",
-        "📍 Розташування: Одеська область, с. Великий Дальник",
-        "📞 Телефон: +380932599103",
-        "🕒 Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00",
-        "🚚 Доставка: Новою Поштою по всій Україні"
-    ]
-}
+def get_faqs_from_db():
+    """Отримує всі FAQ з БД"""
+    return get_all_faqs()
 
-# ============== СЛУЖБОВІ КОМАНДИ ДЛЯ АДМІНІВ ==============
+def refresh_faqs():
+    """Оновлює список FAQ в пам'яті (опціонально)"""
+    pass  # Будемо отримувати свіжі дані при кожному запиті
+
+# ========== КОМАНДИ ДЛЯ АДМІНІВ ==========
 
 async def is_admin_user(user_id: int) -> bool:
     """Перевіряє чи є користувач адміністратором"""
@@ -1132,11 +1199,14 @@ def get_quick_order_menu(product_id: int) -> InlineKeyboardMarkup:
     return create_inline_keyboard(buttons)
 
 def get_faq_menu() -> InlineKeyboardMarkup:
+    # Отримуємо свіжі FAQ з БД при кожному запиті
+    faqs = get_all_faqs()
     buttons = []
-    for i, faq in enumerate(FAQS, 1):
+    for faq in faqs:
+        short_q = faq['question'][:40] + "..." if len(faq['question']) > 40 else faq['question']
         buttons.append([{
-            "text": f"❔ {faq['question'][:40]}...",
-            "callback_data": f"faq_{i}"
+            "text": f"❔ {short_q}",
+            "callback_data": f"faq_{faq['id']}"
         }])
     buttons.append([{"text": "🔙 Назад", "callback_data": "back_main_menu"}])
     return create_inline_keyboard(buttons)
@@ -1236,25 +1306,8 @@ def get_welcome_text() -> str:
     """
 
 def get_company_text() -> str:
-    text = f"""
-<b>{COMPANY_INFO['name']}</b>
-
-{COMPANY_INFO['description']}
-
-<b>📋 Деталі:</b>
-"""
-    for detail in COMPANY_INFO['details']:
-        text += f"• {detail}\n"
-    text += "\n<b>🌿 Наша філософія:</b>\n"
-    text += "• Вирощуємо на власних полях Одещини\n"
-    text += "• Використовуємо натуральне консервування\n"
-    text += "• Гарантуємо якість кожного продукту\n"
-    text += "• Працюємо з любов'ю до природи\n"
-    text += "\n<b>🚚 Доставка:</b>\n"
-    text += "• Новою Поштою по всій Україні\n"
-    text += "• Самовивіз з Одеської області, с. Великий Дальник\n"
-    text += "• Терміни доставки: 1-4 дні в залежності від регіону\n"
-    return text
+    # Отримуємо актуальний текст з БД
+    return get_company_info()
 
 def get_product_text(product_id: int) -> str:
     refresh_products()
@@ -1303,18 +1356,31 @@ def get_quick_order_text(product_id: int) -> str:
 
 <i>Оберіть зручний для вас спосіб зв'язку 👇</i>
 """
-    
-def get_faq_text(faq_id: int) -> str:
-    if 0 <= faq_id - 1 < len(FAQS):
-        faq = FAQS[faq_id - 1]
-        return f"""
-<b>❔ {faq['question']}</b>
 
-{faq['answer']}
+def get_faq_text(faq_id: int) -> str:
+    # Отримуємо конкретний FAQ з БД
+    conn = get_db_connection()
+    if not conn:
+        return "❌ Помилка отримання даних"
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT question, answer FROM faq WHERE id = %s', (faq_id,))
+        row = cursor.fetchone()
+        if row:
+            return f"""
+<b>❔ {row['question']}</b>
+
+{row['answer']}
 
 <i>📞 Маєте інші запитання? Зв'яжіться з нами: +380932599103</i>
-        """
-    return "❌ Питання не знайдено"
+            """
+        return "❌ Питання не знайдено"
+    except Exception as e:
+        logger.error(f"Помилка отримання faq за ID: {e}")
+        return "❌ Помилка отримання даних"
+    finally:
+        conn.close()
 
 def get_contact_text() -> str:
     return """
@@ -1710,9 +1776,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ============== ОБРОБНИКИ FAQ ==============
         
         elif data.startswith("faq_"):
-            faq_id = int(data.split("_")[1])
-            faq_text = get_faq_text(faq_id)
-            await query.edit_message_text(faq_text, reply_markup=get_back_keyboard("faq"), parse_mode='HTML')
+            try:
+                faq_id = int(data.split("_")[1])
+                faq_text = get_faq_text(faq_id)
+                await query.edit_message_text(faq_text, reply_markup=get_back_keyboard("faq"), parse_mode='HTML')
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         # ============== ОБРОБНИКИ КОРЗИНИ ==============
@@ -2285,5 +2354,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
