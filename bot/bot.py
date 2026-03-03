@@ -181,6 +181,15 @@ def init_database():
         ''')
         
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS welcome_message (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                text TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by BIGINT
+            )
+        ''')
+        
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS faq (
                 id SERIAL PRIMARY KEY,
                 question TEXT NOT NULL,
@@ -230,6 +239,31 @@ def init_database():
                 INSERT INTO company_info (id, text) VALUES (1, %s)
             ''', (company_text,))
         
+        # Додаємо початкові дані для welcome_message, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM welcome_message")
+        welcome_count = cursor.fetchone()['count']
+        
+        if welcome_count == 0:
+            welcome_text = """
+<b>🇺🇦 Вітаємо у боті компанії Бонелет! 🌱</b>
+
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
+
+🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
+🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
+🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
+
+<b>🏢 Про нас:</b>
+• Працюємо з 2022 року
+• Розташування: Одеська область, с. Великий Дальник
+• Доставка Новою Поштою по всій Україні
+
+<b>Оберіть опцію з меню 👇</b>
+    """
+            cursor.execute('''
+                INSERT INTO welcome_message (id, text) VALUES (1, %s)
+            ''', (welcome_text,))
+        
         # Додаємо початкові FAQ, якщо їх немає
         cursor.execute("SELECT COUNT(*) FROM faq")
         faq_count = cursor.fetchone()['count']
@@ -272,6 +306,23 @@ def get_company_info() -> str:
     finally:
         conn.close()
 
+def get_welcome_message() -> str:
+    """Отримує вітальне повідомлення з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return "Помилка отримання даних"
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT text FROM welcome_message WHERE id = 1')
+        row = cursor.fetchone()
+        return row['text'] if row else "Повідомлення не знайдено"
+    except Exception as e:
+        logger.error(f"Помилка отримання welcome_message: {e}")
+        return "Помилка отримання даних"
+    finally:
+        conn.close()
+
 def get_all_faqs() -> List[Dict]:
     """Отримує всі FAQ з БД, відсортовані за позицією"""
     conn = get_db_connection()
@@ -289,7 +340,24 @@ def get_all_faqs() -> List[Dict]:
     finally:
         conn.close()
 
-# ========== РЕШТА КОДУ З ВАШОГО bot.py ==========
+def get_faq_by_id(faq_id: int) -> Optional[Dict]:
+    """Отримує FAQ за ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT question, answer FROM faq WHERE id = %s', (faq_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Помилка отримання faq за ID: {e}")
+        return None
+    finally:
+        conn.close()
+
+# ========== РЕШТА КОДУ ==========
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
@@ -987,16 +1055,6 @@ def refresh_products():
 
 refresh_products()
 
-# ========== ЗАМІНА ЛОКАЛЬНИХ ЗМІННИХ НА ФУНКЦІЇ З БД ==========
-
-def get_faqs_from_db():
-    """Отримує всі FAQ з БД"""
-    return get_all_faqs()
-
-def refresh_faqs():
-    """Оновлює список FAQ в пам'яті (опціонально)"""
-    pass  # Будемо отримувати свіжі дані при кожному запиті
-
 # ========== КОМАНДИ ДЛЯ АДМІНІВ ==========
 
 async def is_admin_user(user_id: int) -> bool:
@@ -1174,7 +1232,10 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        button_text = f"{product['image']} {product['name']} - {product['price']} грн/{product['unit']}"
+        button_text = f"{product['image']} {product['name']}\n{product['price']} грн/{product['unit']}"
+        # Обмежуємо довжину тексту кнопки (Telegram дозволяє до 64 символів)
+        if len(button_text) > 60:
+            button_text = button_text[:57] + "..."
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1288,22 +1349,8 @@ def validate_phone(phone: str) -> Tuple[bool, str]:
     return False, phone
 
 def get_welcome_text() -> str:
-    return """
-<b>🇺🇦 Вітаємо у боті компанії Бонелет! 🌱</b>
-
-Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
-
-🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
-🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
-🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
-
-<b>🏢 Про нас:</b>
-• Працюємо з 2022 року
-• Розташування: Одеська область, с. Великий Дальник
-• Доставка Новою Поштою по всій Україні
-
-<b>Оберіть опцію з меню 👇</b>
-    """
+    # Отримуємо актуальне вітальне повідомлення з БД
+    return get_welcome_message()
 
 def get_company_text() -> str:
     # Отримуємо актуальний текст з БД
