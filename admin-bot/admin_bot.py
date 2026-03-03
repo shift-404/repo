@@ -230,6 +230,27 @@ def init_database_if_empty():
             )
         ''')
         
+        # ========== НОВІ ТАБЛИЦІ ==========
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS company_info (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                text TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by BIGINT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS faq (
+                id SERIAL PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                position INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Додаємо колонку image_data якщо її немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
@@ -237,30 +258,51 @@ def init_database_if_empty():
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image_data: {e}")
         
-        cursor.execute("SELECT COUNT(*) FROM products")
-        count = cursor.fetchone()['count']
+        # Додаємо початкові дані для company_info, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM company_info")
+        company_count = cursor.fetchone()['count']
         
-        if count == 0:
-            products = [
-                (1, "Артишок маринований з зернами гірчиці", 250, "мариновані артишоки", 
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🥫", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, оцет винний, цукор, сіль, суміш спецій, зерна гірчиці"),
-                
-                (2, "Артишок маринований з чилі", 250, "мариновані артишоки",
-                 "Артишок вирощений та замаринований на Одещині, пікантний, не гострий.",
-                 "банка", "🌶️", None, "Баночка 315 мл, Маса нетто 280 г, Склад: артишок 60%, вода, олія оливкова, оцет винний, цукор, сіль, суміш спецій, чилі"),
-                
-                (3, "Паштет з артишоку", 290, "паштети",
-                 "Ніжний паштет з артишоку, ідеальний для бутербродів та закусок.",
-                 "банка", "🍯", None, "Баночка 200 г, Маса нетто 200 г, Склад: артишок, вершки, олія оливкова, спеції")
+        if company_count == 0:
+            company_text = """
+<b>🌱 Компанія Бонелет</b>
+
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.
+
+<b>📋 Деталі:</b>
+• 👨‍🌾 Працюємо з 2022 року
+• 📍 Розташування: Одеська область, с. Великий Дальник
+• 📞 Телефон: +380932599103
+• 🕒 Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00
+• 🚚 Доставка: Новою Поштою по всій Україні
+
+<b>🌿 Наша філософія:</b>
+• Вирощуємо на власних полях Одещини
+• Використовуємо натуральне консервування
+• Гарантуємо якість кожного продукту
+• Працюємо з любов'ю до природи
+
+<b>🚚 Доставка:</b>
+• Новою Поштою по всій Україні
+• Самовивіз з Одеської області, с. Великий Дальник
+• Терміни доставки: 1-4 дні в залежності від регіону
+"""
+            cursor.execute('''
+                INSERT INTO company_info (id, text) VALUES (1, %s)
+            ''', (company_text,))
+        
+        # Додаємо початкові FAQ, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM faq")
+        faq_count = cursor.fetchone()['count']
+        
+        if faq_count == 0:
+            faqs = [
+                ("Які способи оплати ви приймаєте?", "✅ Готівка при отриманні\n✅ Переказ на карту ПриватБанку\n✅ Оплата через LiqPay", 0),
+                ("Які терміни доставки?", "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів", 1)
             ]
-            
-            for product in products:
+            for question, answer, position in faqs:
                 cursor.execute('''
-                    INSERT INTO products (id, name, price, category, description, unit, image, image_data, details)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
-                ''', product)
+                    INSERT INTO faq (question, answer, position) VALUES (%s, %s, %s)
+                ''', (question, answer, position))
         
         conn.commit()
         logger.info("Таблиці успішно створено/перевірено!")
@@ -268,6 +310,210 @@ def init_database_if_empty():
     except Exception as e:
         logger.error(f"Помилка створення таблиць: {e}")
         logger.error(traceback.format_exc())
+        return False
+    finally:
+        conn.close()
+
+# ========== ФУНКЦІЇ ДЛЯ РОБОТИ З КОМПАНІЄЮ ==========
+
+def get_company_info() -> str:
+    """Отримує текст про компанію з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return "Помилка отримання даних"
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT text FROM company_info WHERE id = 1')
+        row = cursor.fetchone()
+        return row['text'] if row else "Інформацію не знайдено"
+    except Exception as e:
+        logger.error(f"Помилка отримання company_info: {e}")
+        return "Помилка отримання даних"
+    finally:
+        conn.close()
+
+def update_company_info(text: str, updated_by: int) -> bool:
+    """Оновлює текст про компанію в БД"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE company_info 
+            SET text = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s
+            WHERE id = 1
+        ''', (text, updated_by))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Помилка оновлення company_info: {e}")
+        return False
+    finally:
+        conn.close()
+
+# ========== ФУНКЦІЇ ДЛЯ РОБОТИ З FAQ ==========
+
+def get_all_faqs() -> List[Dict]:
+    """Отримує всі FAQ з БД, відсортовані за позицією"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, question, answer, position FROM faq ORDER BY position, id')
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        logger.error(f"Помилка отримання faq: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_faq_by_id(faq_id: int) -> Optional[Dict]:
+    """Отримує FAQ за ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, question, answer, position FROM faq WHERE id = %s', (faq_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Помилка отримання faq за ID: {e}")
+        return None
+    finally:
+        conn.close()
+
+def add_faq(question: str, answer: str) -> Optional[int]:
+    """Додає новий FAQ, повертає ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO faq (question, answer, position) 
+            VALUES (%s, %s, COALESCE((SELECT MAX(position) + 1 FROM faq), 0))
+            RETURNING id
+        ''', (question, answer))
+        result = cursor.fetchone()
+        conn.commit()
+        return result['id'] if result else None
+    except Exception as e:
+        logger.error(f"Помилка додавання faq: {e}")
+        return None
+    finally:
+        conn.close()
+
+def update_faq(faq_id: int, question: str, answer: str) -> bool:
+    """Оновлює існуючий FAQ"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE faq 
+            SET question = %s, answer = %s, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        ''', (question, answer, faq_id))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Помилка оновлення faq: {e}")
+        return False
+    finally:
+        conn.close()
+
+def delete_faq(faq_id: int) -> bool:
+    """Видаляє FAQ"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM faq WHERE id = %s', (faq_id,))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Помилка видалення faq: {e}")
+        return False
+    finally:
+        conn.close()
+
+def move_faq_up(faq_id: int) -> bool:
+    """Переміщує FAQ вгору (зменшує position)"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Отримуємо поточний FAQ
+        cursor.execute('SELECT position FROM faq WHERE id = %s', (faq_id,))
+        current = cursor.fetchone()
+        if not current:
+            return False
+        
+        current_pos = current['position']
+        
+        # Шукаємо FAQ з попередньою позицією
+        cursor.execute('SELECT id, position FROM faq WHERE position < %s ORDER BY position DESC LIMIT 1', (current_pos,))
+        previous = cursor.fetchone()
+        
+        if previous:
+            # Міняємо позиції місцями
+            cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (previous['position'], faq_id))
+            cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (current_pos, previous['id']))
+            conn.commit()
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Помилка переміщення faq вгору: {e}")
+        return False
+    finally:
+        conn.close()
+
+def move_faq_down(faq_id: int) -> bool:
+    """Переміщує FAQ вниз (збільшує position)"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Отримуємо поточний FAQ
+        cursor.execute('SELECT position FROM faq WHERE id = %s', (faq_id,))
+        current = cursor.fetchone()
+        if not current:
+            return False
+        
+        current_pos = current['position']
+        
+        # Шукаємо FAQ з наступною позицією
+        cursor.execute('SELECT id, position FROM faq WHERE position > %s ORDER BY position ASC LIMIT 1', (current_pos,))
+        next_faq = cursor.fetchone()
+        
+        if next_faq:
+            # Міняємо позиції місцями
+            cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (next_faq['position'], faq_id))
+            cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (current_pos, next_faq['id']))
+            conn.commit()
+            return True
+        return False
+    except Exception as e:
+        logger.error(f"Помилка переміщення faq вниз: {e}")
         return False
     finally:
         conn.close()
@@ -1860,6 +2106,8 @@ def get_main_menu():
         [{"text": "👑 Адміни", "callback_data": "admin_manage_admins"}],
         [{"text": "🔄 Скинути замовлення", "callback_data": "admin_reset_orders"}],
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
+        [{"text": "🏢 Редагувати 'Про компанію'", "callback_data": "admin_edit_company"}],
+        [{"text": "❓ Редагувати FAQ", "callback_data": "admin_edit_faq"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
     return create_inline_keyboard(keyboard)
@@ -1956,6 +2204,46 @@ def get_settings_menu():
         [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(keyboard)
+
+# ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ КОМПАНІЇ ==========
+
+def get_company_edit_menu() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "✏️ Редагувати текст", "callback_data": "company_edit_text"}],
+        [{"text": "👁️ Переглянути поточний", "callback_data": "company_view"}],
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+# ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ FAQ ==========
+
+def get_faq_main_menu() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "📋 Список FAQ", "callback_data": "faq_list"}],
+        [{"text": "➕ Додати питання", "callback_data": "faq_add"}],
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+def get_faq_list_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
+    buttons = []
+    for faq in faqs:
+        short_q = faq['question'][:30] + "..." if len(faq['question']) > 30 else faq['question']
+        buttons.append([{"text": f"❓ {short_q}", "callback_data": f"faq_edit_{faq['id']}"}])
+    buttons.append([{"text": "➕ Додати нове", "callback_data": "faq_add"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_faq_main"}])
+    return create_inline_keyboard(buttons)
+
+def get_faq_edit_menu(faq_id: int) -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "✏️ Редагувати питання", "callback_data": f"faq_edit_question_{faq_id}"}],
+        [{"text": "✏️ Редагувати відповідь", "callback_data": f"faq_edit_answer_{faq_id}"}],
+        [{"text": "⬆️ Перемістити вгору", "callback_data": f"faq_move_up_{faq_id}"}],
+        [{"text": "⬇️ Перемістити вниз", "callback_data": f"faq_move_down_{faq_id}"}],
+        [{"text": "❌ Видалити", "callback_data": f"faq_delete_{faq_id}"}],
+        [{"text": "🔙 Назад", "callback_data": "faq_list"}]
+    ]
+    return create_inline_keyboard(buttons)
 
 def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
     keyboard = [
@@ -2087,7 +2375,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data.startswith("back_to_"):
             target = data[8:]
             
-            if target.startswith("edit_product_"):
+            if target == "faq_main":
+                await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
+                return
+            elif target == "edit_product_":
                 try:
                     product_id = int(target.split("_")[2])
                     product = get_product_by_id(product_id)
@@ -2129,6 +2420,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif target == "products":
                 await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
                 return
+            elif target == "company":
+                await query.edit_message_text("🏢 Редагування 'Про компанію'\n\nОберіть дію:", reply_markup=get_company_edit_menu())
+                return
+            elif target == "faq":
+                await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
+                return
             else:
                 await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
                 return
@@ -2155,6 +2452,204 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text = "❌ Помилка при видаленні"
             await query.edit_message_text(text, reply_markup=get_main_menu())
             return
+        
+        # ========== ОБРОБНИКИ ДЛЯ КОМПАНІЇ ==========
+        
+        elif data == "admin_edit_company":
+            await query.edit_message_text("🏢 Редагування 'Про компанію'\n\nОберіть дію:", reply_markup=get_company_edit_menu())
+            return
+        
+        elif data == "company_view":
+            company_text = get_company_info()
+            await query.edit_message_text(
+                f"🏢 <b>Поточний текст:</b>\n\n{company_text}",
+                reply_markup=get_back_keyboard("company"),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "company_edit_text":
+            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_company_text"}
+            await query.edit_message_text(
+                f"✏️ Редагування тексту 'Про компанію'\n\n"
+                f"📋 <b>Поточний текст (скопіюйте його):</b>\n\n{get_company_info()}\n\n"
+                f"📝 Надішліть новий текст:",
+                reply_markup=get_back_keyboard("company"),
+                parse_mode='HTML'
+            )
+            return
+        
+        # ========== ОБРОБНИКИ ДЛЯ FAQ ==========
+        
+        elif data == "admin_edit_faq":
+            await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
+            return
+        
+        elif data == "faq_list":
+            faqs = get_all_faqs()
+            if not faqs:
+                await query.edit_message_text("❓ FAQ порожній. Додайте нове питання.", reply_markup=get_faq_main_menu())
+                return
+            
+            await query.edit_message_text(
+                "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
+                reply_markup=get_faq_list_keyboard(faqs),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "faq_add":
+            admin_sessions[user_id] = {"state": "authenticated", "action": "add_faq_question"}
+            await query.edit_message_text(
+                "➕ Додавання нового FAQ\n\nВведіть <b>питання</b>:",
+                reply_markup=get_back_keyboard("faq"),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data.startswith("faq_edit_"):
+            try:
+                faq_id = int(data.split("_")[2])
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    return
+                
+                await query.edit_message_text(
+                    f"❓ <b>Редагування FAQ #{faq_id}</b>\n\n"
+                    f"<b>Питання:</b> {faq['question']}\n"
+                    f"<b>Відповідь:</b> {faq['answer']}\n\n"
+                    f"Виберіть дію:",
+                    reply_markup=get_faq_edit_menu(faq_id),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_edit_question_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_faq_question_{faq_id}"}
+                await query.edit_message_text(
+                    f"✏️ Редагування питання FAQ #{faq_id}\n\n"
+                    f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
+                    f"📝 Введіть нове питання:",
+                    reply_markup=get_back_keyboard("faq"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_edit_answer_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_faq_answer_{faq_id}"}
+                await query.edit_message_text(
+                    f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
+                    f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
+                    f"📝 Введіть нову відповідь:",
+                    reply_markup=get_back_keyboard("faq"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_move_up_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                if move_faq_up(faq_id):
+                    await query.answer("✅ Переміщено вгору")
+                else:
+                    await query.answer("❌ Вже на початку", show_alert=False)
+                
+                # Повертаємось до списку
+                faqs = get_all_faqs()
+                await query.edit_message_text(
+                    "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
+                    reply_markup=get_faq_list_keyboard(faqs),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_move_down_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                if move_faq_down(faq_id):
+                    await query.answer("✅ Переміщено вниз")
+                else:
+                    await query.answer("❌ Вже в кінці", show_alert=False)
+                
+                # Повертаємось до списку
+                faqs = get_all_faqs()
+                await query.edit_message_text(
+                    "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
+                    reply_markup=get_faq_list_keyboard(faqs),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_delete_"):
+            try:
+                faq_id = int(data.split("_")[2])
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    return
+                
+                # Підтвердження видалення
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Так, видалити", callback_data=f"faq_confirm_delete_{faq_id}")],
+                    [InlineKeyboardButton("❌ Ні, скасувати", callback_data=f"faq_edit_{faq_id}")]
+                ])
+                await query.edit_message_text(
+                    f"❓ <b>Видалити FAQ?</b>\n\n"
+                    f"<b>Питання:</b> {faq['question']}\n\n"
+                    f"Ця дія незворотна.",
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_confirm_delete_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                if delete_faq(faq_id):
+                    await query.answer("✅ FAQ видалено")
+                    faqs = get_all_faqs()
+                    if faqs:
+                        await query.edit_message_text(
+                            "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
+                            reply_markup=get_faq_list_keyboard(faqs),
+                            parse_mode='HTML'
+                        )
+                    else:
+                        await query.edit_message_text("❓ FAQ порожній", reply_markup=get_faq_main_menu())
+                else:
+                    await query.edit_message_text("❌ Помилка при видаленні", reply_markup=get_back_keyboard("faq"))
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        # ========== ІНШІ ОБРОБНИКИ ==========
         
         elif data == "admin_products":
             await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
@@ -3374,7 +3869,93 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         action = session.get("action")
         logger.info(f"📌 Поточний action: {action}, session: {session}")
         
-        if action == "add_product_name":
+        # ========== ОБРОБКА РЕДАГУВАННЯ КОМПАНІЇ ==========
+        
+        if action == "edit_company_text":
+            if update_company_info(text, user_id):
+                await update.message.reply_text(
+                    "✅ Текст 'Про компанію' успішно оновлено!",
+                    reply_markup=get_company_edit_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні тексту",
+                    reply_markup=get_company_edit_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        # ========== ОБРОБКА ДОДАВАННЯ FAQ ==========
+        
+        elif action == "add_faq_question":
+            admin_sessions[user_id]["faq_question"] = text
+            admin_sessions[user_id]["action"] = "add_faq_answer"
+            await update.message.reply_text(
+                "📝 Введіть <b>відповідь</b> на питання:",
+                reply_markup=get_back_keyboard("faq"),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif action == "add_faq_answer":
+            question = session.get("faq_question")
+            answer = text
+            faq_id = add_faq(question, answer)
+            if faq_id:
+                await update.message.reply_text(
+                    f"✅ FAQ додано! ID: {faq_id}",
+                    reply_markup=get_faq_main_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при додаванні FAQ",
+                    reply_markup=get_faq_main_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        # ========== ОБРОБКА РЕДАГУВАННЯ FAQ ==========
+        
+        elif action.startswith("edit_faq_question_"):
+            try:
+                faq_id = int(action.split("_")[3])
+                if update_faq(faq_id, text, session.get("faq_answer", "")):
+                    await update.message.reply_text(
+                        f"✅ Питання FAQ #{faq_id} оновлено!",
+                        reply_markup=get_faq_edit_menu(faq_id)
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при оновленні",
+                        reply_markup=get_back_keyboard("faq")
+                    )
+            except (IndexError, ValueError):
+                await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action.startswith("edit_faq_answer_"):
+            try:
+                faq_id = int(action.split("_")[3])
+                faq = get_faq_by_id(faq_id)
+                if faq and update_faq(faq_id, faq['question'], text):
+                    await update.message.reply_text(
+                        f"✅ Відповідь FAQ #{faq_id} оновлено!",
+                        reply_markup=get_faq_edit_menu(faq_id)
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при оновленні",
+                        reply_markup=get_back_keyboard("faq")
+                    )
+            except (IndexError, ValueError):
+                await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        # ========== ОБРОБКА ДОДАВАННЯ ТОВАРУ ==========
+        
+        elif action == "add_product_name":
             admin_sessions[user_id]["product_name"] = text
             admin_sessions[user_id]["action"] = "add_product_price"
             await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("products"))
@@ -3943,12 +4524,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
