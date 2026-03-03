@@ -241,6 +241,15 @@ def init_database_if_empty():
         ''')
         
         cursor.execute('''
+            CREATE TABLE IF NOT EXISTS welcome_message (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                text TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by BIGINT
+            )
+        ''')
+        
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS faq (
                 id SERIAL PRIMARY KEY,
                 question TEXT NOT NULL,
@@ -289,6 +298,31 @@ def init_database_if_empty():
             cursor.execute('''
                 INSERT INTO company_info (id, text) VALUES (1, %s)
             ''', (company_text,))
+        
+        # Додаємо початкові дані для welcome_message, якщо їх немає
+        cursor.execute("SELECT COUNT(*) FROM welcome_message")
+        welcome_count = cursor.fetchone()['count']
+        
+        if welcome_count == 0:
+            welcome_text = """
+<b>🇺🇦 Вітаємо у боті компанії Бонелет! 🌱</b>
+
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
+
+🥫 <b>Артишок маринований з зернами гірчиці</b> - пікантний, не гострий
+🌶️ <b>Артишок маринований з чилі</b> - з нотками гостроти
+🍯 <b>Паштет з артишоку</b> - ніжний для бутербродів
+
+<b>🏢 Про нас:</b>
+• Працюємо з 2022 року
+• Розташування: Одеська область, с. Великий Дальник
+• Доставка Новою Поштою по всій Україні
+
+<b>Оберіть опцію з меню 👇</b>
+    """
+            cursor.execute('''
+                INSERT INTO welcome_message (id, text) VALUES (1, %s)
+            ''', (welcome_text,))
         
         # Додаємо початкові FAQ, якщо їх немає
         cursor.execute("SELECT COUNT(*) FROM faq")
@@ -350,6 +384,46 @@ def update_company_info(text: str, updated_by: int) -> bool:
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення company_info: {e}")
+        return False
+    finally:
+        conn.close()
+
+# ========== ФУНКЦІЇ ДЛЯ РОБОТИ З ВІТАЛЬНИМ ПОВІДОМЛЕННЯМ ==========
+
+def get_welcome_message() -> str:
+    """Отримує вітальне повідомлення з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return "Помилка отримання даних"
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT text FROM welcome_message WHERE id = 1')
+        row = cursor.fetchone()
+        return row['text'] if row else "Повідомлення не знайдено"
+    except Exception as e:
+        logger.error(f"Помилка отримання welcome_message: {e}")
+        return "Помилка отримання даних"
+    finally:
+        conn.close()
+
+def update_welcome_message(text: str, updated_by: int) -> bool:
+    """Оновлює вітальне повідомлення в БД"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE welcome_message 
+            SET text = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s
+            WHERE id = 1
+        ''', (text, updated_by))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Помилка оновлення welcome_message: {e}")
         return False
     finally:
         conn.close()
@@ -2107,6 +2181,7 @@ def get_main_menu():
         [{"text": "🔄 Скинути замовлення", "callback_data": "admin_reset_orders"}],
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
         [{"text": "🏢 Редагувати 'Про компанію'", "callback_data": "admin_edit_company"}],
+        [{"text": "👋 Редагувати вітання", "callback_data": "admin_edit_welcome"}],
         [{"text": "❓ Редагувати FAQ", "callback_data": "admin_edit_faq"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
@@ -2211,6 +2286,16 @@ def get_company_edit_menu() -> InlineKeyboardMarkup:
     buttons = [
         [{"text": "✏️ Редагувати текст", "callback_data": "company_edit_text"}],
         [{"text": "👁️ Переглянути поточний", "callback_data": "company_view"}],
+        [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
+    ]
+    return create_inline_keyboard(buttons)
+
+# ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ ВІТАННЯ ==========
+
+def get_welcome_edit_menu() -> InlineKeyboardMarkup:
+    buttons = [
+        [{"text": "✏️ Редагувати вітання", "callback_data": "welcome_edit_text"}],
+        [{"text": "👁️ Переглянути поточне", "callback_data": "welcome_view"}],
         [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(buttons)
@@ -2378,7 +2463,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target == "faq_main":
                 await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
                 return
-            elif target == "edit_product_":
+            elif target.startswith("edit_product_"):
                 try:
                     product_id = int(target.split("_")[2])
                     product = get_product_by_id(product_id)
@@ -2390,10 +2475,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                             [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
                             [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
+                            [InlineKeyboardButton("🏷 Емодзі", callback_data=f"edit_field_image_emoji_{product_id}")],
+                            [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
                             [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
                         ]
                         await query.edit_message_text(
-                            f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
+                            f"✏️ Редагування товару #{product_id}\n\n"
+                            f"Назва: {product['name']}\n"
+                            f"Ціна: {product['price']} грн\n"
+                            f"Одиниці: {product['unit']}\n"
+                            f"Емодзі: {product['image']}\n\n"
+                            f"Оберіть поле для редагування:",
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
                         return
@@ -2422,6 +2514,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             elif target == "company":
                 await query.edit_message_text("🏢 Редагування 'Про компанію'\n\nОберіть дію:", reply_markup=get_company_edit_menu())
+                return
+            elif target == "welcome":
+                await query.edit_message_text("👋 Редагування вітального повідомлення\n\nОберіть дію:", reply_markup=get_welcome_edit_menu())
                 return
             elif target == "faq":
                 await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
@@ -2475,6 +2570,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📋 <b>Поточний текст (скопіюйте його):</b>\n\n{get_company_info()}\n\n"
                 f"📝 Надішліть новий текст:",
                 reply_markup=get_back_keyboard("company"),
+                parse_mode='HTML'
+            )
+            return
+        
+        # ========== ОБРОБНИКИ ДЛЯ ВІТАННЯ ==========
+        
+        elif data == "admin_edit_welcome":
+            await query.edit_message_text("👋 Редагування вітального повідомлення\n\nОберіть дію:", reply_markup=get_welcome_edit_menu())
+            return
+        
+        elif data == "welcome_view":
+            welcome_text = get_welcome_message()
+            await query.edit_message_text(
+                f"👋 <b>Поточне вітальне повідомлення:</b>\n\n{welcome_text}",
+                reply_markup=get_back_keyboard("welcome"),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "welcome_edit_text":
+            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_welcome_text"}
+            await query.edit_message_text(
+                f"✏️ Редагування вітального повідомлення\n\n"
+                f"📋 <b>Поточний текст (скопіюйте його):</b>\n\n{get_welcome_message()}\n\n"
+                f"📝 Надішліть новий текст:",
+                reply_markup=get_back_keyboard("welcome"),
                 parse_mode='HTML'
             )
             return
@@ -2662,7 +2783,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 text = "📦 Список товарів\n\n"
                 for p in products:
-                    text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн\nКатегорія: {p['category']}\n{'─'*30}\n"
+                    text += f"ID: {p['id']}\nНазва: {p['name']}\nЦіна: {p['price']} грн/{p['unit']}\nКатегорія: {p['category']}\nЕмодзі: {p['image']}\n{'─'*30}\n"
             keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
             await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -2777,6 +2898,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_product_image_keyboard(product_id, has_image)
                 )
                 return
+            elif field == "image_emoji":
+                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_image_emoji", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Введіть новий емодзі для товару (наприклад: 🥫, 🌶️, 🍯):",
+                    reply_markup=get_back_keyboard("products")
+                )
+                return
+            elif field == "unit":
+                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_unit", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Введіть нову одиницю виміру (наприклад: банка, кг, шт, л):",
+                    reply_markup=get_back_keyboard("products")
+                )
+                return
             
             admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
             field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію"}
@@ -2810,10 +2945,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
                 [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
                 [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
+                [InlineKeyboardButton("🏷 Емодзі", callback_data=f"edit_field_image_emoji_{product_id}")],
+                [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
                 [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
             ]
             await query.edit_message_text(
-                f"✏️ Редагування товару #{product_id}\n\nНазва: {product['name']}\nЦіна: {product['price']} грн\n\nОберіть поле для редагування:",
+                f"✏️ Редагування товару #{product_id}\n\n"
+                f"Назва: {product['name']}\n"
+                f"Ціна: {product['price']} грн\n"
+                f"Одиниці: {product['unit']}\n"
+                f"Емодзі: {product['image']}\n\n"
+                f"Оберіть поле для редагування:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
@@ -3885,6 +4027,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
+        # ========== ОБРОБКА РЕДАГУВАННЯ ВІТАННЯ ==========
+        
+        if action == "edit_welcome_text":
+            if update_welcome_message(text, user_id):
+                await update.message.reply_text(
+                    "✅ Вітальне повідомлення успішно оновлено!",
+                    reply_markup=get_welcome_edit_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні вітання",
+                    reply_markup=get_welcome_edit_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
         # ========== ОБРОБКА ДОДАВАННЯ FAQ ==========
         
         elif action == "add_faq_question":
@@ -4010,7 +4168,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if product_id:
                 await update.message.reply_text(
-                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн",
+                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн\nОдиниці: {product_data['unit']}\nЕмодзі: {product_data['image']}",
                     reply_markup=get_products_menu()
                 )
             else:
@@ -4019,7 +4177,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-        # ============== НОВІ ОБРОБНИКИ ДЛЯ ФОТО ==============
+        # ============== ОБРОБНИКИ ДЛЯ РЕДАГУВАННЯ ТОВАРУ ==============
+        
+        elif action == "edit_product_image_emoji":
+            product_id = session.get("product_id")
+            if update_product(product_id, image=text):
+                await update.message.reply_text(f"✅ Емодзі товару #{product_id} оновлено!", reply_markup=get_products_menu())
+            else:
+                await update.message.reply_text("❌ Помилка при оновленні емодзі", reply_markup=get_products_menu())
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action == "edit_product_unit":
+            product_id = session.get("product_id")
+            if update_product(product_id, unit=text):
+                await update.message.reply_text(f"✅ Одиниці товару #{product_id} оновлено!", reply_markup=get_products_menu())
+            else:
+                await update.message.reply_text("❌ Помилка при оновленні одиниць", reply_markup=get_products_menu())
+            admin_sessions[user_id].pop("action", None)
+            return
         
         elif action == "edit_product_image_url":
             product_id = session.get("product_id")
