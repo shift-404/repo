@@ -1604,7 +1604,8 @@ def get_all_products():
     
     try:
         cursor = conn.cursor()
-        cursor.execute('SELECT id, name, price, category, description, unit, details, created_at FROM products ORDER BY id')
+        # Додаємо image назад у запит
+        cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
         rows = cursor.fetchall()
         
         products = []
@@ -4685,3 +4686,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
