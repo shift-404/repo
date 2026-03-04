@@ -13,7 +13,7 @@ import traceback
 import time
 import requests
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,10 +22,10 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
-from telegram import Bot  # Додайте цей імпорт!
 
+# ВИПРАВЛЕНО: було %(astime)s, тепер %(asctime)s
 logging.basicConfig(
-    format='%(astime)s - ADMIN - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    format='%(asctime)s - ADMIN - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     level=logging.DEBUG,
     handlers=[
         logging.StreamHandler(sys.stdout),
@@ -41,7 +41,6 @@ debug_logger.setLevel(logging.DEBUG)
 logger.info("=" * 80)
 logger.info("ЗАПУСК АДМІН-БОТА З РОЗШИРЕНОЮ ВІДЛАДКОЮ")
 logger.info("=" * 80)
-
 KYIV_TZ = None
 try:
     import pytz
@@ -4951,4 +4950,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
