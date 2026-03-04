@@ -680,10 +680,6 @@ messages_offset = {}
 broadcast_in_progress = {}
 
 def is_authenticated(user_id: int) -> bool:
-    """Перевіряє чи автентифікований користувач"""
-    result = user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
-    logger.debug(f"Перевірка автентифікації для {user_id}: {result}")
-    return result
 
 async def download_image_from_url_to_bytes(url: str) -> bytes:
     """Завантажує зображення за URL і повертає як байти"""
@@ -4948,6 +4944,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
