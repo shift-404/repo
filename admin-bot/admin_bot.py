@@ -715,6 +715,8 @@ async def download_telegram_file_to_bytes(file_id: str, bot: Bot) -> bytes:
         return None
 
 async def reset_all_orders():
+    """Скидає всі замовлення"""
+    logger.warning("⚠️ Викликано reset_all_orders()")
     conn = get_db_connection()
     if not conn:
         return False
@@ -729,7 +731,7 @@ async def reset_all_orders():
         cursor.execute("DELETE FROM messages")
         
         conn.commit()
-        logger.info("Всі замовлення та повідомлення успішно видалено!")
+        logger.info("✅ Всі замовлення та повідомлення успішно видалено!")
         return True
     except Exception as e:
         logger.error(f"Помилка видалення замовлень: {e}")
@@ -1949,28 +1951,6 @@ def is_admin(user_id: int) -> bool:
         return False
     finally:
         conn.close()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обробник команди /start"""
-    user = update.effective_user
-    user_id = user.id
-    
-    logger.info(f"👤 Адмін {user_id} (@{user.username}) викликав /start")
-    
-    if ADMIN_IDS and user_id in ADMIN_IDS:
-        logger.info(f"✅ Адмін {user_id} знайдений в ADMIN_IDS")
-        admin_sessions[user_id] = {"state": "waiting_password"}
-        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
-        return
-    
-    if is_admin(user_id):
-        logger.info(f"✅ Адмін {user_id} знайдений в БД")
-        admin_sessions[user_id] = {"state": "waiting_password"}
-        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
-        return
-    
-    logger.warning(f"❌ Спроба доступу неавторизованого користувача {user_id}")
-    await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
 
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Перевіряє пароль при вході"""
