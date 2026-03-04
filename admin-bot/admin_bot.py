@@ -12,8 +12,10 @@ import asyncio
 import traceback
 import time
 import requests
+import socket
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -100,6 +102,21 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
     logger.info("✅ requests встановлено")
     import requests
+
+def check_single_instance():
+    """Перевіряє чи не запущено інший екземпляр бота"""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result = sock.connect_ex(('127.0.0.1', 9999))
+        sock.close()
+        if result == 0:
+            logger.error("⚠️ Другий екземпляр бота вже запущено!")
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"⚠️ Помилка перевірки екземпляра: {e}")
+        return True
 
 # Отримуємо токени з оточення
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
@@ -1995,12 +2012,13 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_sessions[user_id] = {"state": "authenticated", "authenticated_at": get_kyiv_time().isoformat()}
         last_password_check[user_id] = get_kyiv_time()
         
+        logger.info(f"✅ Адмін {user_id} успішно автентифікований, сесія: {admin_sessions[user_id]}")
+        
         if not is_admin(user_id):
             add_admin(user_id, user.username or "", user_id)
             logger.info(f"✅ Нового адміна {user_id} додано до БД")
         
         await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво прошу до адмін-панелі.", reply_markup=get_main_menu())
-        logger.info(f"✅ Адмін {user_id} успішно автентифікований")
     else:
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
         logger.warning(f"❌ Невірний пароль від адміна {user_id}")
@@ -2636,9 +2654,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = query.data
         
         logger.info(f"🖱️ Адмін {user_id} натиснув: {data}")
+        logger.debug(f"Стан сесії: admin_sessions[{user_id}] = {admin_sessions.get(user_id)}")
         
         if not is_authenticated(user_id):
             logger.warning(f"❌ Неавтентифікований адмін {user_id} спробував натиснути {data}")
+            logger.debug(f"Всі сесії: {admin_sessions}")
             await query.edit_message_text("❌ Сесія закінчилась\n\nНапишіть /start для повторного входу")
             return
         
@@ -2845,8 +2865,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts = data.split("_")
                 logger.debug(f"Розбираємо faq_edit_question_: {parts}")
                 
+                # parts = ['faq', 'edit', 'question', '2']
                 if len(parts) >= 4:
-                    faq_id = int(parts[3])  # Беремо четверту частину
+                    faq_id = int(parts[3])  # Беремо четверту частину (індекс 3)
                     logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
                     
                     faq = get_faq_by_id(faq_id)
@@ -2884,8 +2905,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parts = data.split("_")
                 logger.debug(f"Розбираємо faq_edit_answer_: {parts}")
                 
+                # parts = ['faq', 'edit', 'answer', '2']
                 if len(parts) >= 4:
-                    faq_id = int(parts[3])  # Беремо четверту частину
+                    faq_id = int(parts[3])  # Беремо четверту частину (індекс 3)
                     logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
                     
                     faq = get_faq_by_id(faq_id)
@@ -2913,6 +2935,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except (IndexError, ValueError) as e:
                 logger.error(f"Помилка парсингу ID: {e}, data: {data}")
                 logger.error(traceback.format_exc())
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+        
+        elif data.startswith("faq_move_up_"):
+            try:
+                faq_id = int(data.split("_")[3])
+                logger.debug(f"Спроба перемістити FAQ #{faq_id} вгору")
+                if move_faq_up(faq_id):
+                    await query.answer("✅ Переміщено вгору")
+                else:
+                    await query.answer("❌ Вже на початку", show_alert=False)
+                
+                # Повертаємось до списку
+                faqs = get_all_faqs()
+                await query.edit_message_text(
+                    "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
+                    reply_markup=get_faq_list_keyboard(faqs),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
@@ -4883,11 +4926,26 @@ async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, 
     
     return sent_count, fail_count
 
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробник помилок"""
+    try:
+        if isinstance(context.error, Conflict):
+            logger.error("❌ Конфлікт з іншим екземпляром бота! Переконайтеся, що запущено тільки один екземпляр.")
+            return
+        
+        logger.error(f"Помилка: {context.error}")
+    except Exception as e:
+        logger.error(f"Помилка в обробнику помилок: {e}")
+
 def main():
     """Головна функція запуску бота"""
     logger.info("=" * 80)
     logger.info("🚀 ЗАПУСК АДМІН-БОТА БОНЕЛЕТ")
     logger.info("=" * 80)
+    
+    if not check_single_instance():
+        logger.error("🚫 Бот вже запущено в іншому процесі! Завершуємо...")
+        sys.exit(1)
     
     try:
         conn = get_db_connection()
@@ -4938,6 +4996,7 @@ def main():
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         application.add_handler(MessageHandler(filters.PHOTO, message_handler))
+        application.add_error_handler(error_handler)
         
         logger.info("✅ Адмін-бот готовий до роботи")
         logger.info("🚀 Запуск polling...")
@@ -4950,9 +5009,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
