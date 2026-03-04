@@ -1952,6 +1952,31 @@ def is_admin(user_id: int) -> bool:
     finally:
         conn.close()
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробник команди /start"""
+    user = update.effective_user
+    user_id = user.id
+    
+    logger.info(f"👤 Адмін {user_id} (@{user.username}) викликав /start")
+    
+    # Спочатку перевіряємо через ADMIN_IDS (перші адміни)
+    if ADMIN_IDS and user_id in ADMIN_IDS:
+        logger.info(f"✅ Адмін {user_id} знайдений в ADMIN_IDS")
+        admin_sessions[user_id] = {"state": "waiting_password"}
+        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
+        return
+    
+    # Перевіряємо через базу даних
+    if is_admin(user_id):
+        logger.info(f"✅ Адмін {user_id} знайдений в БД")
+        admin_sessions[user_id] = {"state": "waiting_password"}
+        await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
+        return
+    
+    # Якщо не пройшов жодну перевірку - доступ заборонено
+    logger.warning(f"❌ Спроба доступу неавторизованого користувача {user_id}")
+    await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
+
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Перевіряє пароль при вході"""
     user = update.effective_user
@@ -4924,3 +4949,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
