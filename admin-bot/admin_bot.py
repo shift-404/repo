@@ -13,29 +13,32 @@ import traceback
 import time
 import requests
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, Bot
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters,
-    ContextTypes
-)
-
+# Налаштування логування з детальним виведенням
 logging.basicConfig(
-    format='%(asctime)s - ADMIN - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format='%(asctime)s - ADMIN - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    level=logging.DEBUG,  # Змінено на DEBUG для детального логування
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('admin_bot_debug.log', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Додаткове логування для відладки
+debug_logger = logging.getLogger('debug')
+debug_logger.setLevel(logging.DEBUG)
+
+logger.info("=" * 80)
+logger.info("ЗАПУСК АДМІН-БОТА З РОЗШИРЕНОЮ ВІДЛАДКОЮ")
+logger.info("=" * 80)
 
 KYIV_TZ = None
 try:
     import pytz
     KYIV_TZ = pytz.timezone('Europe/Kyiv')
+    logger.info("✅ Бібліотека pytz завантажена, часовий пояс Kyiv")
 except ImportError:
-    logger.warning("Бібліотека pytz не встановлена, використовую UTC")
+    logger.warning("⚠️ Бібліотека pytz не встановлена, використовую UTC")
     KYIV_TZ = None
 
 def get_kyiv_time():
@@ -58,209 +61,225 @@ def format_kyiv_time(dt_str):
             except:
                 pass
         return dt.strftime('%Y-%m-%d %H:%M:%S')
-    except:
+    except Exception as e:
+        logger.error(f"Помилка форматування часу: {e}")
         return str(dt_str)[:16]
 
 # Діагностика
-print("📂 Поточна папка:", os.getcwd())
-print("📄 Файли в папці:", os.listdir('.'))
+logger.info("📂 Поточна папка: %s", os.getcwd())
+logger.info("📄 Файли в папці: %s", os.listdir('.'))
 
 # Перевіряємо наявність requirements.txt
 if os.path.exists('requirements.txt'):
-    print("✅ requirements.txt знайдено")
+    logger.info("✅ requirements.txt знайдено")
     with open('requirements.txt', 'r') as f:
-        print("📄 Вміст requirements.txt:")
-        print(f.read())
+        content = f.read()
+        logger.info("📄 Вміст requirements.txt:\n%s", content)
 else:
-    print("❌ requirements.txt НЕ знайдено!")
+    logger.error("❌ requirements.txt НЕ знайдено!")
 
 # Перевіряємо чи requests встановлено
 try:
     import requests
-    print("✅ requests вже встановлено")
+    logger.info("✅ requests вже встановлено, версія: %s", requests.__version__)
 except ImportError:
-    print("❌ requests не встановлено")
+    logger.error("❌ requests не встановлено")
     
     import subprocess
-    print("📦 Встановлюю requests...")
+    logger.info("📦 Встановлюю requests...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
-    print("✅ requests встановлено")
+    logger.info("✅ requests встановлено")
     import requests
 
+# Отримуємо токени з оточення
 TOKEN = os.getenv("ADMIN_BOT_TOKEN")
 if not TOKEN:
-    logger.error("ADMIN_BOT_TOKEN не знайдено!")
+    logger.error("❌ ADMIN_BOT_TOKEN не знайдено!")
     sys.exit(1)
+else:
+    logger.info(f"✅ ADMIN_BOT_TOKEN отримано: {TOKEN[:10]}...")
 
 MAIN_BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not MAIN_BOT_TOKEN:
-    logger.error("BOT_TOKEN не знайдено!")
+    logger.error("❌ BOT_TOKEN не знайдено!")
     sys.exit(1)
+else:
+    logger.info(f"✅ MAIN_BOT_TOKEN отримано: {MAIN_BOT_TOKEN[:10]}...")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+logger.info(f"✅ ADMIN_PASSWORD конфігуровано: {'так' if ADMIN_PASSWORD else 'ні'}")
+
 ADMIN_IDS = [int(id) for id in os.getenv("ADMIN_IDS", "").split(",") if id]
+logger.info(f"✅ ADMIN_IDS: {ADMIN_IDS}")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    logger.error("DATABASE_URL не знайдено!")
+    logger.error("❌ DATABASE_URL не знайдено!")
     sys.exit(1)
+else:
+    logger.info(f"✅ DATABASE_URL отримано: {DATABASE_URL[:20]}...")
 
 def get_db_connection():
+    """Підключення до бази даних з детальним логуванням помилок"""
+    logger.debug("Спроба підключення до БД...")
     try:
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        logger.debug("✅ Підключення до БД успішне")
         return conn
     except Exception as e:
-        logger.error(f"Помилка підключення до БД: {e}")
+        logger.error(f"❌ Помилка підключення до БД: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 def init_database_if_empty():
+    """Ініціалізація бази даних з детальним логуванням"""
+    logger.info("=" * 60)
+    logger.info("🔄 Ініціалізація бази даних...")
+    logger.info("=" * 60)
+    
     conn = get_db_connection()
     if not conn:
+        logger.error("❌ Не вдалося підключитись до БД для ініціалізації")
         return False
     
     try:
         cursor = conn.cursor()
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                first_name TEXT,
-                last_name TEXT,
-                username TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # Створення таблиць
+        tables = [
+            ('users', '''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    first_name TEXT,
+                    last_name TEXT,
+                    username TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('user_sessions', '''
+                CREATE TABLE IF NOT EXISTS user_sessions (
+                    user_id BIGINT PRIMARY KEY,
+                    state TEXT DEFAULT '',
+                    temp_data TEXT DEFAULT '{}',
+                    last_section TEXT DEFAULT 'main_menu',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('carts', '''
+                CREATE TABLE IF NOT EXISTS carts (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    product_id INTEGER,
+                    quantity REAL,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('orders', '''
+                CREATE TABLE IF NOT EXISTS orders (
+                    order_id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    user_name TEXT,
+                    username TEXT,
+                    phone TEXT,
+                    city TEXT,
+                    np_department TEXT,
+                    total REAL,
+                    status TEXT DEFAULT 'нове',
+                    order_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('order_items', '''
+                CREATE TABLE IF NOT EXISTS order_items (
+                    id SERIAL PRIMARY KEY,
+                    order_id INTEGER,
+                    product_name TEXT,
+                    quantity REAL,
+                    price_per_unit REAL
+                )
+            '''),
+            ('messages', '''
+                CREATE TABLE IF NOT EXISTS messages (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    user_name TEXT,
+                    username TEXT,
+                    text TEXT,
+                    message_type TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('quick_orders', '''
+                CREATE TABLE IF NOT EXISTS quick_orders (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    user_name TEXT,
+                    username TEXT,
+                    phone TEXT,
+                    product_id INTEGER,
+                    product_name TEXT,
+                    quantity REAL,
+                    contact_method TEXT,
+                    message TEXT,
+                    status TEXT DEFAULT 'нове',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('products', '''
+                CREATE TABLE IF NOT EXISTS products (
+                    id SERIAL PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    price REAL NOT NULL,
+                    category TEXT,
+                    description TEXT,
+                    unit TEXT DEFAULT 'банка',
+                    image TEXT,
+                    image_data BYTEA,
+                    details TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('admins', '''
+                CREATE TABLE IF NOT EXISTS admins (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    added_by INTEGER,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            '''),
+            ('company_info', '''
+                CREATE TABLE IF NOT EXISTS company_info (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    text TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_by BIGINT
+                )
+            '''),
+            ('welcome_message', '''
+                CREATE TABLE IF NOT EXISTS welcome_message (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    text TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_by BIGINT
+                )
+            '''),
+            ('faq', '''
+                CREATE TABLE IF NOT EXISTS faq (
+                    id SERIAL PRIMARY KEY,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    position INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+        ]
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_sessions (
-                user_id BIGINT PRIMARY KEY,
-                state TEXT DEFAULT '',
-                temp_data TEXT DEFAULT '{}',
-                last_section TEXT DEFAULT 'main_menu',
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        for table_name, create_query in tables:
+            logger.debug(f"Створення/перевірка таблиці: {table_name}")
+            cursor.execute(create_query)
         
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS carts (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                product_id INTEGER,
-                quantity REAL,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS orders (
-                order_id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                user_name TEXT,
-                username TEXT,
-                phone TEXT,
-                city TEXT,
-                np_department TEXT,
-                total REAL,
-                status TEXT DEFAULT 'нове',
-                order_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS order_items (
-                id SERIAL PRIMARY KEY,
-                order_id INTEGER,
-                product_name TEXT,
-                quantity REAL,
-                price_per_unit REAL
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS messages (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                user_name TEXT,
-                username TEXT,
-                text TEXT,
-                message_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS quick_orders (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                user_name TEXT,
-                username TEXT,
-                phone TEXT,
-                product_id INTEGER,
-                product_name TEXT,
-                quantity REAL,
-                contact_method TEXT,
-                message TEXT,
-                status TEXT DEFAULT 'нове',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS products (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                price REAL NOT NULL,
-                category TEXT,
-                description TEXT,
-                unit TEXT DEFAULT 'банка',
-                image TEXT,
-                image_data BYTEA,
-                details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS admins (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                added_by INTEGER,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # ========== НОВІ ТАБЛИЦІ ==========
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS company_info (
-                id INTEGER PRIMARY KEY DEFAULT 1,
-                text TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by BIGINT
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS welcome_message (
-                id INTEGER PRIMARY KEY DEFAULT 1,
-                text TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_by BIGINT
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS faq (
-                id SERIAL PRIMARY KEY,
-                question TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                position INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Додаємо колонку image_data якщо її немає
+        # Додаємо колонки якщо їх немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT')
             logger.info("✅ Колонка image додана до таблиці products")
@@ -273,9 +292,10 @@ def init_database_if_empty():
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image_data: {e}")
         
-        # Додаємо початкові дані для company_info, якщо їх немає
+        # Додаємо початкові дані для company_info
         cursor.execute("SELECT COUNT(*) FROM company_info")
         company_count = cursor.fetchone()['count']
+        logger.debug(f"company_info записів: {company_count}")
         
         if company_count == 0:
             company_text = """
@@ -304,10 +324,12 @@ def init_database_if_empty():
             cursor.execute('''
                 INSERT INTO company_info (id, text) VALUES (1, %s)
             ''', (company_text,))
+            logger.info("✅ Додано початкові дані company_info")
         
-        # Додаємо початкові дані для welcome_message, якщо їх немає
+        # Додаємо початкові дані для welcome_message
         cursor.execute("SELECT COUNT(*) FROM welcome_message")
         welcome_count = cursor.fetchone()['count']
+        logger.debug(f"welcome_message записів: {welcome_count}")
         
         if welcome_count == 0:
             welcome_text = """
@@ -329,10 +351,12 @@ def init_database_if_empty():
             cursor.execute('''
                 INSERT INTO welcome_message (id, text) VALUES (1, %s)
             ''', (welcome_text,))
+            logger.info("✅ Додано початкові дані welcome_message")
         
-        # Додаємо початкові FAQ, якщо їх немає
+        # Додаємо початкові FAQ
         cursor.execute("SELECT COUNT(*) FROM faq")
         faq_count = cursor.fetchone()['count']
+        logger.debug(f"faq записів: {faq_count}")
         
         if faq_count == 0:
             faqs = [
@@ -343,12 +367,13 @@ def init_database_if_empty():
                 cursor.execute('''
                     INSERT INTO faq (question, answer, position) VALUES (%s, %s, %s)
                 ''', (question, answer, position))
+            logger.info("✅ Додано початкові FAQ")
         
         conn.commit()
-        logger.info("Таблиці успішно створено/перевірено!")
+        logger.info("✅ База даних успішно ініціалізована!")
         return True
     except Exception as e:
-        logger.error(f"Помилка створення таблиць: {e}")
+        logger.error(f"❌ Помилка ініціалізації бази даних: {e}")
         logger.error(traceback.format_exc())
         return False
     finally:
@@ -358,23 +383,29 @@ def init_database_if_empty():
 
 def get_company_info() -> str:
     """Отримує текст про компанію з БД"""
+    logger.debug("Виклик get_company_info()")
     conn = get_db_connection()
     if not conn:
+        logger.error("Не вдалося підключитись до БД")
         return "Помилка отримання даних"
     
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT text FROM company_info WHERE id = 1')
         row = cursor.fetchone()
-        return row['text'] if row else "Інформацію не знайдено"
+        result = row['text'] if row else "Інформацію не знайдено"
+        logger.debug(f"Отримано company_info, довжина: {len(result)}")
+        return result
     except Exception as e:
         logger.error(f"Помилка отримання company_info: {e}")
+        logger.error(traceback.format_exc())
         return "Помилка отримання даних"
     finally:
         conn.close()
 
 def update_company_info(text: str, updated_by: int) -> bool:
     """Оновлює текст про компанію в БД"""
+    logger.debug(f"Виклик update_company_info(), updated_by: {updated_by}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -387,9 +418,11 @@ def update_company_info(text: str, updated_by: int) -> bool:
             WHERE id = 1
         ''', (text, updated_by))
         conn.commit()
+        logger.info(f"✅ Company info оновлено користувачем {updated_by}")
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення company_info: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -398,6 +431,7 @@ def update_company_info(text: str, updated_by: int) -> bool:
 
 def get_welcome_message() -> str:
     """Отримує вітальне повідомлення з БД"""
+    logger.debug("Виклик get_welcome_message()")
     conn = get_db_connection()
     if not conn:
         return "Помилка отримання даних"
@@ -406,15 +440,19 @@ def get_welcome_message() -> str:
         cursor = conn.cursor()
         cursor.execute('SELECT text FROM welcome_message WHERE id = 1')
         row = cursor.fetchone()
-        return row['text'] if row else "Повідомлення не знайдено"
+        result = row['text'] if row else "Повідомлення не знайдено"
+        logger.debug(f"Отримано welcome_message, довжина: {len(result)}")
+        return result
     except Exception as e:
         logger.error(f"Помилка отримання welcome_message: {e}")
+        logger.error(traceback.format_exc())
         return "Помилка отримання даних"
     finally:
         conn.close()
 
 def update_welcome_message(text: str, updated_by: int) -> bool:
     """Оновлює вітальне повідомлення в БД"""
+    logger.debug(f"Виклик update_welcome_message(), updated_by: {updated_by}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -427,9 +465,11 @@ def update_welcome_message(text: str, updated_by: int) -> bool:
             WHERE id = 1
         ''', (text, updated_by))
         conn.commit()
+        logger.info(f"✅ Welcome message оновлено користувачем {updated_by}")
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення welcome_message: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -438,40 +478,59 @@ def update_welcome_message(text: str, updated_by: int) -> bool:
 
 def get_all_faqs() -> List[Dict]:
     """Отримує всі FAQ з БД, відсортовані за позицією"""
+    logger.debug("Виклик get_all_faqs()")
     conn = get_db_connection()
     if not conn:
+        logger.error("Не вдалося підключитись до БД")
         return []
     
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT id, question, answer, position FROM faq ORDER BY position, id')
         rows = cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = [dict(row) for row in rows]
+        logger.debug(f"Отримано {len(result)} FAQ")
+        return result
     except Exception as e:
         logger.error(f"Помилка отримання faq: {e}")
+        logger.error(traceback.format_exc())
         return []
     finally:
         conn.close()
 
 def get_faq_by_id(faq_id: int) -> Optional[Dict]:
-    """Отримує FAQ за ID"""
+    """Отримує FAQ за ID з усіма полями"""
+    logger.debug(f"Виклик get_faq_by_id() з ID: {faq_id}")
     conn = get_db_connection()
     if not conn:
+        logger.error("Не вдалося підключитись до БД")
         return None
     
     try:
         cursor = conn.cursor()
         cursor.execute('SELECT id, question, answer, position FROM faq WHERE id = %s', (faq_id,))
         row = cursor.fetchone()
-        return dict(row) if row else None
+        if row:
+            result = {
+                'id': row['id'],
+                'question': row['question'],
+                'answer': row['answer'],
+                'position': row['position']
+            }
+            logger.debug(f"✅ Знайдено FAQ #{faq_id}: {result['question'][:30]}...")
+            return result
+        logger.warning(f"❌ FAQ з ID {faq_id} не знайдено")
+        return None
     except Exception as e:
-        logger.error(f"Помилка отримання faq за ID: {e}")
+        logger.error(f"Помилка отримання faq за ID {faq_id}: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
 
 def add_faq(question: str, answer: str) -> Optional[int]:
     """Додає новий FAQ, повертає ID"""
+    logger.debug(f"Виклик add_faq(), питання: {question[:30]}...")
     conn = get_db_connection()
     if not conn:
         return None
@@ -485,15 +544,19 @@ def add_faq(question: str, answer: str) -> Optional[int]:
         ''', (question, answer))
         result = cursor.fetchone()
         conn.commit()
-        return result['id'] if result else None
+        faq_id = result['id'] if result else None
+        logger.info(f"✅ FAQ додано з ID: {faq_id}")
+        return faq_id
     except Exception as e:
         logger.error(f"Помилка додавання faq: {e}")
+        logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
 
 def update_faq(faq_id: int, question: str, answer: str) -> bool:
     """Оновлює існуючий FAQ"""
+    logger.debug(f"Виклик update_faq() для ID: {faq_id}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -506,15 +569,18 @@ def update_faq(faq_id: int, question: str, answer: str) -> bool:
             WHERE id = %s
         ''', (question, answer, faq_id))
         conn.commit()
+        logger.info(f"✅ FAQ #{faq_id} оновлено")
         return True
     except Exception as e:
-        logger.error(f"Помилка оновлення faq: {e}")
+        logger.error(f"Помилка оновлення faq #{faq_id}: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
 
 def delete_faq(faq_id: int) -> bool:
     """Видаляє FAQ"""
+    logger.debug(f"Виклик delete_faq() для ID: {faq_id}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -523,15 +589,18 @@ def delete_faq(faq_id: int) -> bool:
         cursor = conn.cursor()
         cursor.execute('DELETE FROM faq WHERE id = %s', (faq_id,))
         conn.commit()
+        logger.info(f"✅ FAQ #{faq_id} видалено")
         return True
     except Exception as e:
-        logger.error(f"Помилка видалення faq: {e}")
+        logger.error(f"Помилка видалення faq #{faq_id}: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
 
 def move_faq_up(faq_id: int) -> bool:
     """Переміщує FAQ вгору (зменшує position)"""
+    logger.debug(f"Виклик move_faq_up() для ID: {faq_id}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -543,29 +612,36 @@ def move_faq_up(faq_id: int) -> bool:
         cursor.execute('SELECT position FROM faq WHERE id = %s', (faq_id,))
         current = cursor.fetchone()
         if not current:
+            logger.warning(f"FAQ #{faq_id} не знайдено")
             return False
         
         current_pos = current['position']
+        logger.debug(f"Поточна позиція: {current_pos}")
         
         # Шукаємо FAQ з попередньою позицією
         cursor.execute('SELECT id, position FROM faq WHERE position < %s ORDER BY position DESC LIMIT 1', (current_pos,))
         previous = cursor.fetchone()
         
         if previous:
+            logger.debug(f"Знайдено попередній FAQ з ID: {previous['id']}, позиція: {previous['position']}")
             # Міняємо позиції місцями
             cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (previous['position'], faq_id))
             cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (current_pos, previous['id']))
             conn.commit()
+            logger.info(f"✅ FAQ #{faq_id} переміщено вгору")
             return True
+        logger.info(f"ℹ️ FAQ #{faq_id} вже на початку")
         return False
     except Exception as e:
         logger.error(f"Помилка переміщення faq вгору: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
 
 def move_faq_down(faq_id: int) -> bool:
     """Переміщує FAQ вниз (збільшує position)"""
+    logger.debug(f"Виклик move_faq_down() для ID: {faq_id}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -577,23 +653,29 @@ def move_faq_down(faq_id: int) -> bool:
         cursor.execute('SELECT position FROM faq WHERE id = %s', (faq_id,))
         current = cursor.fetchone()
         if not current:
+            logger.warning(f"FAQ #{faq_id} не знайдено")
             return False
         
         current_pos = current['position']
+        logger.debug(f"Поточна позиція: {current_pos}")
         
         # Шукаємо FAQ з наступною позицією
         cursor.execute('SELECT id, position FROM faq WHERE position > %s ORDER BY position ASC LIMIT 1', (current_pos,))
         next_faq = cursor.fetchone()
         
         if next_faq:
+            logger.debug(f"Знайдено наступний FAQ з ID: {next_faq['id']}, позиція: {next_faq['position']}")
             # Міняємо позиції місцями
             cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (next_faq['position'], faq_id))
             cursor.execute('UPDATE faq SET position = %s WHERE id = %s', (current_pos, next_faq['id']))
             conn.commit()
+            logger.info(f"✅ FAQ #{faq_id} переміщено вниз")
             return True
+        logger.info(f"ℹ️ FAQ #{faq_id} вже в кінці")
         return False
     except Exception as e:
         logger.error(f"Помилка переміщення faq вниз: {e}")
+        logger.error(traceback.format_exc())
         return False
     finally:
         conn.close()
@@ -601,6 +683,7 @@ def move_faq_down(faq_id: int) -> bool:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
+logger.info(f"✅ Директорія для звітів: {REPORTS_DIR}")
 
 admin_sessions = {}
 last_password_check = {}
@@ -609,7 +692,10 @@ messages_offset = {}
 broadcast_in_progress = {}
 
 def is_authenticated(user_id: int) -> bool:
-    return user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
+    """Перевіряє чи автентифікований користувач"""
+    result = user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated"
+    logger.debug(f"Перевірка автентифікації для {user_id}: {result}")
+    return result
 
 async def download_image_from_url_to_bytes(url: str) -> bytes:
     """Завантажує зображення за URL і повертає як байти"""
@@ -641,6 +727,8 @@ async def download_telegram_file_to_bytes(file_id: str, bot: Bot) -> bytes:
         return None
 
 async def reset_all_orders():
+    """Скидає всі замовлення"""
+    logger.warning("⚠️ Викликано reset_all_orders()")
     conn = get_db_connection()
     if not conn:
         return False
@@ -655,7 +743,7 @@ async def reset_all_orders():
         cursor.execute("DELETE FROM messages")
         
         conn.commit()
-        logger.info("Всі замовлення та повідомлення успішно видалено!")
+        logger.info("✅ Всі замовлення та повідомлення успішно видалено!")
         return True
     except Exception as e:
         logger.error(f"Помилка видалення замовлень: {e}")
@@ -665,6 +753,8 @@ async def reset_all_orders():
         conn.close()
 
 async def notify_admins_about_new_order(order_data: dict):
+    """Сповіщає адмінів про нове замовлення"""
+    logger.debug(f"Виклик notify_admins_about_new_order() з даними: {order_data.get('order_id')}")
     try:
         conn = get_db_connection()
         if not conn:
@@ -733,6 +823,8 @@ async def notify_admins_about_new_order(order_data: dict):
         logger.error(traceback.format_exc())
 
 async def notify_admins_about_message(message_data: dict):
+    """Сповіщає адмінів про нове повідомлення"""
+    logger.debug(f"Виклик notify_admins_about_message() від користувача {message_data.get('user_id')}")
     try:
         conn = get_db_connection()
         if not conn:
@@ -783,6 +875,8 @@ async def notify_admins_about_message(message_data: dict):
         logger.error(traceback.format_exc())
 
 async def send_combined_quick_order_notification(order_id: int, user_id: int, user_name: str, username: str, product_name: str, message_text: str):
+    """Сповіщає адмінів про швидке замовлення з повідомленням"""
+    logger.debug(f"Виклик send_combined_quick_order_notification() для замовлення #{order_id}")
     try:
         conn = get_db_connection()
         if not conn:
@@ -835,6 +929,7 @@ async def send_combined_quick_order_notification(order_id: int, user_id: int, us
         logger.error(traceback.format_exc())
 
 def safe_get(order, key, default=0):
+    """Безпечне отримання значення зі словника"""
     value = order.get(key)
     if value is None:
         return default
@@ -846,6 +941,8 @@ def safe_get(order, key, default=0):
         return default
 
 def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 0):
+    """Отримує всі замовлення"""
+    logger.debug(f"Виклик get_all_orders(include_quick={include_quick}, limit={limit}, offset={offset})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -907,6 +1004,7 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
         
         all_orders.sort(key=lambda x: x.get('created_at', ''), reverse=True)
         
+        logger.debug(f"Отримано {len(all_orders)} замовлень")
         return all_orders
     except Exception as e:
         logger.error(f"Помилка отримання замовлень: {e}")
@@ -916,6 +1014,8 @@ def get_all_orders(include_quick: bool = True, limit: int = None, offset: int = 
         conn.close()
 
 def get_recent_orders(hours: int = 1, min_count: int = 3):
+    """Отримує останні замовлення"""
+    logger.debug(f"Виклик get_recent_orders(hours={hours}, min_count={min_count})")
     all_orders = get_all_orders(include_quick=True)
     
     kyiv_now = get_kyiv_time()
@@ -947,6 +1047,8 @@ def get_recent_orders(hours: int = 1, min_count: int = 3):
     return recent_orders[:min_count]
 
 def get_more_orders(user_id: int, count: int = 5):
+    """Отримує наступні замовлення для пагінації"""
+    logger.debug(f"Виклик get_more_orders(user_id={user_id}, count={count})")
     if user_id not in orders_offset:
         orders_offset[user_id] = 0
     
@@ -957,6 +1059,7 @@ def get_more_orders(user_id: int, count: int = 5):
     return orders
 
 def format_order_text(order: dict) -> str:
+    """Форматує текст замовлення для відображення"""
     order_type = "⚡" if order.get('order_type') == 'quick' else "📦"
     order_id = order.get('order_id', order.get('id', 'Н/Д'))
     
@@ -984,6 +1087,8 @@ def format_order_text(order: dict) -> str:
     return text
 
 def get_orders_by_phone(phone: str):
+    """Шукає замовлення за телефоном"""
+    logger.debug(f"Виклик get_orders_by_phone(phone={phone})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1029,6 +1134,8 @@ def get_orders_by_phone(phone: str):
         conn.close()
 
 def get_new_orders():
+    """Отримує нові замовлення"""
+    logger.debug("Виклик get_new_orders()")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1058,6 +1165,8 @@ def get_new_orders():
         conn.close()
 
 def get_quick_orders():
+    """Отримує швидкі замовлення"""
+    logger.debug("Виклик get_quick_orders()")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1088,6 +1197,8 @@ def get_quick_orders():
         conn.close()
 
 def update_order_status(order_id: int, status: str, order_type: str = 'regular'):
+    """Оновлює статус замовлення"""
+    logger.debug(f"Виклик update_order_status(order_id={order_id}, status={status}, order_type={order_type})")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1105,6 +1216,7 @@ def update_order_status(order_id: int, status: str, order_type: str = 'regular')
             ''', (status, order_id))
         
         conn.commit()
+        logger.info(f"✅ Статус замовлення #{order_id} оновлено на '{status}'")
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення статусу: {e}")
@@ -1114,6 +1226,8 @@ def update_order_status(order_id: int, status: str, order_type: str = 'regular')
         conn.close()
 
 def get_order_by_id(order_id: int, order_type: str = 'regular'):
+    """Отримує замовлення за ID"""
+    logger.debug(f"Виклик get_order_by_id(order_id={order_id}, order_type={order_type})")
     conn = get_db_connection()
     if not conn:
         return None
@@ -1125,6 +1239,7 @@ def get_order_by_id(order_id: int, order_type: str = 'regular'):
             cursor.execute('SELECT * FROM orders WHERE order_id = %s', (order_id,))
             order_row = cursor.fetchone()
             if not order_row:
+                logger.warning(f"Замовлення #{order_id} не знайдено")
                 return None
             
             order = dict(order_row)
@@ -1145,6 +1260,7 @@ def get_order_by_id(order_id: int, order_type: str = 'regular'):
             cursor.execute('SELECT * FROM quick_orders WHERE id = %s', (order_id,))
             order_row = cursor.fetchone()
             if not order_row:
+                logger.warning(f"Швидке замовлення #{order_id} не знайдено")
                 return None
             
             order = dict(order_row)
@@ -1163,6 +1279,8 @@ def get_order_by_id(order_id: int, order_type: str = 'regular'):
         conn.close()
 
 async def notify_customer_about_status(user_id: int, order_id: int, status: str):
+    """Сповіщає клієнта про зміну статусу замовлення"""
+    logger.debug(f"Виклик notify_customer_about_status(user_id={user_id}, order_id={order_id}, status={status})")
     try:
         status_messages = {
             "підтверджено": "✅ Ваше замовлення підтверджено! Ми розпочали його обробку.",
@@ -1181,13 +1299,15 @@ async def notify_customer_about_status(user_id: int, order_id: int, status: str)
             text=f"<b>Замовлення №{order_id}</b>\n\n{message}",
             parse_mode='HTML'
         )
-        logger.info(f"Сповіщення про статус #{order_id} відправлено клієнту {user_id}")
+        logger.info(f"✅ Сповіщення про статус #{order_id} відправлено клієнту {user_id}")
         return True
     except Exception as e:
-        logger.error(f"Помилка відправки сповіщення клієнту {user_id}: {e}")
+        logger.error(f"❌ Помилка відправки сповіщення клієнту {user_id}: {e}")
         return False
 
 def get_all_messages(limit: int = 50, offset: int = 0):
+    """Отримує всі повідомлення"""
+    logger.debug(f"Виклик get_all_messages(limit={limit}, offset={offset})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1216,6 +1336,8 @@ def get_all_messages(limit: int = 50, offset: int = 0):
         conn.close()
 
 def get_message_by_id(message_id: int):
+    """Отримує повідомлення за ID"""
+    logger.debug(f"Виклик get_message_by_id(message_id={message_id})")
     conn = get_db_connection()
     if not conn:
         return None
@@ -1237,6 +1359,8 @@ def get_message_by_id(message_id: int):
         conn.close()
 
 def get_recent_messages(hours: int = 24, min_count: int = 5):
+    """Отримує останні повідомлення"""
+    logger.debug(f"Виклик get_recent_messages(hours={hours}, min_count={min_count})")
     all_messages = get_all_messages(limit=100)
     
     kyiv_now = get_kyiv_time()
@@ -1268,6 +1392,8 @@ def get_recent_messages(hours: int = 24, min_count: int = 5):
     return recent_messages[:min_count]
 
 def get_more_messages(user_id: int, count: int = 5):
+    """Отримує наступні повідомлення для пагінації"""
+    logger.debug(f"Виклик get_more_messages(user_id={user_id}, count={count})")
     if user_id not in messages_offset:
         messages_offset[user_id] = 0
     
@@ -1278,6 +1404,7 @@ def get_more_messages(user_id: int, count: int = 5):
     return messages
 
 def format_message_text(msg: dict) -> str:
+    """Форматує текст повідомлення для відображення"""
     text = f"💬 <b>Повідомлення #{msg['id']}</b>\n\n"
     text += f"👤 <b>Клієнт:</b> {msg['user_name']}\n"
     text += f"📱 <b>Username:</b> @{msg['username']}\n"
@@ -1288,6 +1415,8 @@ def format_message_text(msg: dict) -> str:
     return text
 
 def get_messages_by_user(user_id: int):
+    """Отримує повідомлення користувача"""
+    logger.debug(f"Виклик get_messages_by_user(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1316,6 +1445,7 @@ def get_messages_by_user(user_id: int):
         conn.close()
 
 def format_messages_text(messages: list) -> str:
+    """Форматує список повідомлень для відображення"""
     if not messages:
         return "💬 Повідомлень поки немає"
     
@@ -1334,6 +1464,7 @@ def format_messages_text(messages: list) -> str:
     return text
 
 def generate_messages_file(messages: list) -> bytes:
+    """Генерує файл з повідомленнями"""
     output = StringIO()
     output.write("ПОВІДОМЛЕННЯ ВІД КОРИСТУВАЧІВ\n")
     output.write("=" * 80 + "\n")
@@ -1352,6 +1483,8 @@ def generate_messages_file(messages: list) -> bytes:
     return output.getvalue().encode('utf-8')
 
 def get_all_users():
+    """Отримує всіх користувачів"""
+    logger.debug("Виклик get_all_users()")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1379,6 +1512,8 @@ def get_all_users():
         conn.close()
 
 def get_user_by_phone(phone: str):
+    """Шукає користувача за телефоном"""
+    logger.debug(f"Виклик get_user_by_phone(phone={phone})")
     conn = get_db_connection()
     if not conn:
         return None
@@ -1410,6 +1545,8 @@ def get_user_by_phone(phone: str):
         conn.close()
 
 def get_user_by_id(user_id: int):
+    """Отримує користувача за ID"""
+    logger.debug(f"Виклик get_user_by_id(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return None
@@ -1431,6 +1568,8 @@ def get_user_by_id(user_id: int):
         conn.close()
 
 def get_user_orders(user_id: int):
+    """Отримує замовлення користувача"""
+    logger.debug(f"Виклик get_user_orders(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1474,6 +1613,8 @@ def get_user_orders(user_id: int):
         conn.close()
 
 def get_user_phones(user_id: int) -> list:
+    """Отримує телефони користувача"""
+    logger.debug(f"Виклик get_user_phones(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1510,6 +1651,8 @@ def get_user_phones(user_id: int) -> list:
         conn.close()
 
 def get_user_messages(user_id: int):
+    """Отримує повідомлення користувача"""
+    logger.debug(f"Виклик get_user_messages(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1538,6 +1681,8 @@ def get_user_messages(user_id: int):
         conn.close()
 
 def get_user_quick_orders(user_id: int):
+    """Отримує швидкі замовлення користувача"""
+    logger.debug(f"Виклик get_user_quick_orders(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1568,6 +1713,7 @@ def get_user_quick_orders(user_id: int):
         conn.close()
 
 def get_customer_segment(user_data: dict, orders: list) -> str:
+    """Визначає сегмент клієнта"""
     if not orders:
         return "🆕 Новий клієнт (без замовлень)"
     
@@ -1605,13 +1751,14 @@ def get_customer_segment(user_data: dict, orders: list) -> str:
         return "📊 Активний клієнт"
 
 def get_all_products():
+    """Отримує всі товари"""
+    logger.debug("Виклик get_all_products()")
     conn = get_db_connection()
     if not conn:
         return []
     
     try:
         cursor = conn.cursor()
-        # Додаємо image назад у запит
         cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
         rows = cursor.fetchall()
         
@@ -1621,6 +1768,7 @@ def get_all_products():
             if product.get('created_at'):
                 product['created_at'] = format_kyiv_time(product.get('created_at'))
             products.append(product)
+        logger.debug(f"Отримано {len(products)} товарів")
         return products
     except Exception as e:
         logger.error(f"Помилка отримання товарів: {e}")
@@ -1630,17 +1778,19 @@ def get_all_products():
         conn.close()
 
 def get_product_by_id(product_id: int):
-    logger.info(f"🔍 get_product_by_id викликано з ID: {product_id}")
+    """Отримує товар за ID"""
+    logger.debug(f"Виклик get_product_by_id() з ID: {product_id}")
     products = get_all_products()
-    logger.info(f"📦 Отримано товарів з БД: {len(products)}")
     for product in products:
         if product["id"] == product_id:
-            logger.info(f"✅ Знайдено товар: {product['name']}")
+            logger.debug(f"✅ Знайдено товар: {product['name']}")
             return product
-    logger.warning(f"❌ Товар з ID {product_id} не знайдено в БД")
+    logger.warning(f"❌ Товар з ID {product_id} не знайдено")
     return None
 
 def update_product(product_id: int, **kwargs):
+    """Оновлює товар"""
+    logger.debug(f"Виклик update_product() для ID: {product_id} з даними: {kwargs.keys()}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1664,6 +1814,7 @@ def update_product(product_id: int, **kwargs):
         query = f"UPDATE products SET {', '.join(fields)} WHERE id = %s"
         cursor.execute(query, values)
         conn.commit()
+        logger.info(f"✅ Товар #{product_id} оновлено")
         return True
     except Exception as e:
         logger.error(f"Помилка оновлення товару: {e}")
@@ -1673,7 +1824,8 @@ def update_product(product_id: int, **kwargs):
         conn.close()
 
 def add_product(name: str, price: float, category: str, description: str, unit: str, details: str):
-    logger.info(f"Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
+    """Додає новий товар"""
+    logger.info(f"📦 Спроба додати товар: {name}, ціна: {price}, категорія: {category}")
     
     conn = get_db_connection()
     if not conn:
@@ -1692,16 +1844,18 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
         product_id = result['id'] if result else None
         conn.commit()
         
-        logger.info(f"Товар додано з ID: {product_id}")
+        logger.info(f"✅ Товар додано з ID: {product_id}")
         return product_id
     except Exception as e:
-        logger.error(f"Помилка додавання товару: {e}")
+        logger.error(f"❌ Помилка додавання товару: {e}")
         logger.error(traceback.format_exc())
         return None
     finally:
         conn.close()
 
 def delete_product(product_id: int):
+    """Видаляє товар"""
+    logger.debug(f"Виклик delete_product() для ID: {product_id}")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1710,6 +1864,7 @@ def delete_product(product_id: int):
         cursor = conn.cursor()
         cursor.execute('DELETE FROM products WHERE id = %s', (product_id,))
         conn.commit()
+        logger.info(f"✅ Товар #{product_id} видалено")
         return True
     except Exception as e:
         logger.error(f"Помилка видалення товару: {e}")
@@ -1719,6 +1874,8 @@ def delete_product(product_id: int):
         conn.close()
 
 def get_all_admins():
+    """Отримує всіх адмінів"""
+    logger.debug("Виклик get_all_admins()")
     conn = get_db_connection()
     if not conn:
         return []
@@ -1742,6 +1899,8 @@ def get_all_admins():
         conn.close()
 
 def add_admin(user_id: int, username: str = "", added_by: int = 0):
+    """Додає адміна"""
+    logger.debug(f"Виклик add_admin(user_id={user_id}, username={username}, added_by={added_by})")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1756,6 +1915,7 @@ def add_admin(user_id: int, username: str = "", added_by: int = 0):
                 added_by = EXCLUDED.added_by
         ''', (user_id, username, added_by))
         conn.commit()
+        logger.info(f"✅ Адмін {user_id} доданий")
         return True
     except Exception as e:
         logger.error(f"Помилка додавання адміна: {e}")
@@ -1765,6 +1925,8 @@ def add_admin(user_id: int, username: str = "", added_by: int = 0):
         conn.close()
 
 def remove_admin(user_id: int):
+    """Видаляє адміна"""
+    logger.debug(f"Виклик remove_admin(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1773,6 +1935,7 @@ def remove_admin(user_id: int):
         cursor = conn.cursor()
         cursor.execute('DELETE FROM admins WHERE user_id = %s', (user_id,))
         conn.commit()
+        logger.info(f"✅ Адмін {user_id} видалений")
         return True
     except Exception as e:
         logger.error(f"Помилка видалення адміна: {e}")
@@ -1783,6 +1946,7 @@ def remove_admin(user_id: int):
 
 def is_admin(user_id: int) -> bool:
     """Перевіряє чи є користувач адміністратором в БД"""
+    logger.debug(f"Виклик is_admin(user_id={user_id})")
     conn = get_db_connection()
     if not conn:
         return False
@@ -1801,11 +1965,15 @@ def is_admin(user_id: int) -> bool:
         conn.close()
 
 async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Перевіряє пароль при вході"""
     user = update.effective_user
     user_id = user.id
     text = update.message.text.strip()
     
+    logger.info(f"🔐 Спроба входу адміна {user_id}")
+    
     if user_id not in admin_sessions or admin_sessions[user_id].get("state") != "waiting_password":
+        logger.warning(f"Спроба ввести пароль без сесії від {user_id}")
         return
     
     if text == ADMIN_PASSWORD:
@@ -1818,11 +1986,15 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"✅ Нового адміна {user_id} додано до БД")
         
         await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво прошу до адмін-панелі.", reply_markup=get_main_menu())
+        logger.info(f"✅ Адмін {user_id} успішно автентифікований")
     else:
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
+        logger.warning(f"❌ Невірний пароль від адміна {user_id}")
         admin_sessions.pop(user_id, None)
 
 def generate_orders_report(orders: list, format: str = "txt"):
+    """Генерує звіт по замовленнях"""
+    logger.debug(f"Генерація звіту по замовленнях, формат: {format}")
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ЗАМОВЛЕННЯХ\n")
@@ -1869,6 +2041,8 @@ def generate_orders_report(orders: list, format: str = "txt"):
         return output.getvalue().encode('utf-8-sig')
 
 def generate_users_report(users: list) -> bytes:
+    """Генерує звіт по користувачах"""
+    logger.debug(f"Генерація звіту по користувачах, кількість: {len(users)}")
     output = StringIO()
     output.write("ЗВІТ ПО КОРИСТУВАЧАХ\n")
     output.write("=" * 100 + "\n")
@@ -1943,6 +2117,8 @@ def generate_users_report(users: list) -> bytes:
     return output.getvalue().encode('utf-8')
 
 def generate_quick_orders_report(orders: list, format: str = "txt"):
+    """Генерує звіт по швидких замовленнях"""
+    logger.debug(f"Генерація звіту по швидких замовленнях, формат: {format}")
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ШВИДКИХ ЗАМОВЛЕННЯХ\n")
@@ -1987,6 +2163,8 @@ def generate_quick_orders_report(orders: list, format: str = "txt"):
         return output.getvalue().encode('utf-8-sig')
 
 def generate_stats_report(stats: dict, format: str = "txt"):
+    """Генерує звіт по статистиці"""
+    logger.debug(f"Генерація звіту по статистиці, формат: {format}")
     if format == "txt":
         output = StringIO()
         output.write("СТАТИСТИКА\n")
@@ -2020,6 +2198,8 @@ def generate_stats_report(stats: dict, format: str = "txt"):
         return output.getvalue().encode('utf-8')
 
 def generate_messages_report(messages: list, format: str = "txt"):
+    """Генерує звіт по повідомленнях"""
+    logger.debug(f"Генерація звіту по повідомленнях, формат: {format}")
     if format == "txt":
         output = StringIO()
         output.write("ЗВІТ ПО ПОВІДОМЛЕННЯХ\n")
@@ -2059,6 +2239,8 @@ def generate_messages_report(messages: list, format: str = "txt"):
         return output.getvalue().encode('utf-8-sig')
 
 def get_statistics():
+    """Отримує статистику"""
+    logger.debug("Виклик get_statistics()")
     conn = get_db_connection()
     if not conn:
         return {}
@@ -2162,6 +2344,7 @@ def get_statistics():
         conn.close()
 
 def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
+    """Створює Inline клавіатуру"""
     keyboard = []
     for row in buttons:
         keyboard_row = []
@@ -2176,6 +2359,7 @@ def create_inline_keyboard(buttons: List[List[Dict]]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 def get_main_menu():
+    """Головне меню адмін-панелі"""
     keyboard = [
         [{"text": "📦 Товари", "callback_data": "admin_products"}],
         [{"text": "📋 Замовлення", "callback_data": "admin_orders"}],
@@ -2195,10 +2379,12 @@ def get_main_menu():
     return create_inline_keyboard(keyboard)
 
 def get_back_keyboard(back_to: str) -> InlineKeyboardMarkup:
+    """Клавіатура з кнопкою Назад"""
     buttons = [[{"text": "🔙 Назад", "callback_data": f"back_to_{back_to}"}]]
     return create_inline_keyboard(buttons)
 
 def get_products_menu():
+    """Меню керування товарами"""
     keyboard = [
         [{"text": "📋 Список товарів", "callback_data": "admin_product_list"}],
         [{"text": "➕ Додати товар", "callback_data": "admin_product_add"}],
@@ -2209,6 +2395,7 @@ def get_products_menu():
     return create_inline_keyboard(keyboard)
 
 def get_orders_menu():
+    """Меню керування замовленнями"""
     keyboard = [
         [{"text": "📋 Останні замовлення", "callback_data": "admin_order_recent"}],
         [{"text": "📋 Всі замовлення", "callback_data": "admin_order_all"}],
@@ -2220,6 +2407,7 @@ def get_orders_menu():
     return create_inline_keyboard(keyboard)
 
 def get_customers_menu():
+    """Меню керування клієнтами"""
     keyboard = [
         [{"text": "📋 Всі клієнти", "callback_data": "admin_customers_all"}],
         [{"text": "🔍 Пошук за телефоном", "callback_data": "admin_customer_search"}],
@@ -2233,6 +2421,7 @@ def get_customers_menu():
     return create_inline_keyboard(keyboard)
 
 def get_messages_menu():
+    """Меню керування повідомленнями"""
     keyboard = [
         [{"text": "📋 Останні повідомлення", "callback_data": "admin_messages_recent"}],
         [{"text": "📋 Всі повідомлення", "callback_data": "admin_messages_all"}],
@@ -2242,6 +2431,7 @@ def get_messages_menu():
     return create_inline_keyboard(keyboard)
 
 def get_broadcast_menu():
+    """Меню розсилок"""
     keyboard = [
         [{"text": "📢 Всім клієнтам", "callback_data": "broadcast_all"}],
         [{"text": "👑 VIP клієнтам", "callback_data": "broadcast_vip"}],
@@ -2253,10 +2443,12 @@ def get_broadcast_menu():
     return create_inline_keyboard(keyboard)
 
 def get_broadcast_input_back_keyboard() -> InlineKeyboardMarkup:
+    """Клавіатура для повернення з розсилки"""
     buttons = [[{"text": "🔙 Назад", "callback_data": "back_to_broadcast"}]]
     return create_inline_keyboard(buttons)
 
 def get_reports_menu():
+    """Меню звітів"""
     keyboard = [
         [{"text": "📦 Замовлення (TXT)", "callback_data": "report_orders_txt"}],
         [{"text": "📦 Замовлення (CSV)", "callback_data": "report_orders_csv"}],
@@ -2272,6 +2464,7 @@ def get_reports_menu():
     return create_inline_keyboard(keyboard)
 
 def get_admins_menu():
+    """Меню керування адмінами"""
     keyboard = [
         [{"text": "📋 Список адмінів", "callback_data": "admin_list"}],
         [{"text": "➕ Додати адміна", "callback_data": "admin_add"}],
@@ -2281,6 +2474,7 @@ def get_admins_menu():
     return create_inline_keyboard(keyboard)
 
 def get_settings_menu():
+    """Меню налаштувань"""
     keyboard = [
         [{"text": "🔑 Змінити пароль", "callback_data": "admin_settings_password"}],
         [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
@@ -2290,6 +2484,7 @@ def get_settings_menu():
 # ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ КОМПАНІЇ ==========
 
 def get_company_edit_menu() -> InlineKeyboardMarkup:
+    """Меню редагування інформації про компанію"""
     buttons = [
         [{"text": "✏️ Редагувати текст", "callback_data": "company_edit_text"}],
         [{"text": "👁️ Переглянути поточний", "callback_data": "company_view"}],
@@ -2300,6 +2495,7 @@ def get_company_edit_menu() -> InlineKeyboardMarkup:
 # ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ ВІТАННЯ ==========
 
 def get_welcome_edit_menu() -> InlineKeyboardMarkup:
+    """Меню редагування вітального повідомлення"""
     buttons = [
         [{"text": "✏️ Редагувати вітання", "callback_data": "welcome_edit_text"}],
         [{"text": "👁️ Переглянути поточне", "callback_data": "welcome_view"}],
@@ -2310,6 +2506,7 @@ def get_welcome_edit_menu() -> InlineKeyboardMarkup:
 # ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ FAQ ==========
 
 def get_faq_main_menu() -> InlineKeyboardMarkup:
+    """Головне меню FAQ"""
     buttons = [
         [{"text": "📋 Список FAQ", "callback_data": "faq_list"}],
         [{"text": "➕ Додати питання", "callback_data": "faq_add"}],
@@ -2318,6 +2515,7 @@ def get_faq_main_menu() -> InlineKeyboardMarkup:
     return create_inline_keyboard(buttons)
 
 def get_faq_list_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
+    """Клавіатура зі списком FAQ"""
     buttons = []
     for faq in faqs:
         short_q = faq['question'][:30] + "..." if len(faq['question']) > 30 else faq['question']
@@ -2327,6 +2525,7 @@ def get_faq_list_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
     return create_inline_keyboard(buttons)
 
 def get_faq_edit_menu(faq_id: int) -> InlineKeyboardMarkup:
+    """Меню редагування конкретного FAQ"""
     buttons = [
         [{"text": "✏️ Редагувати питання", "callback_data": f"faq_edit_question_{faq_id}"}],
         [{"text": "✏️ Редагувати відповідь", "callback_data": f"faq_edit_answer_{faq_id}"}],
@@ -2338,6 +2537,7 @@ def get_faq_edit_menu(faq_id: int) -> InlineKeyboardMarkup:
     return create_inline_keyboard(buttons)
 
 def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
+    """Меню дій із замовленням"""
     keyboard = [
         [{"text": "✅ Підтвердити", "callback_data": f"order_confirm_{order_id}_{order_type}"}],
         [{"text": "📦 Упаковано", "callback_data": f"order_packed_{order_id}_{order_type}"}],
@@ -2350,6 +2550,7 @@ def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
     return create_inline_keyboard(keyboard)
 
 def get_message_actions_menu(message_id: int, user_id: int):
+    """Меню дій із повідомленням"""
     keyboard = [
         [{"text": "📝 Відповісти", "callback_data": f"reply_user_{user_id}"}],
         [{"text": "👤 Профіль клієнта", "callback_data": f"customer_view_{user_id}"}],
@@ -2359,6 +2560,7 @@ def get_message_actions_menu(message_id: int, user_id: int):
     return create_inline_keyboard(keyboard)
 
 def get_customer_actions_menu(user_id: int):
+    """Меню дій із клієнтом"""
     keyboard = [
         [{"text": "📋 Історія замовлень", "callback_data": f"customer_orders_{user_id}"}],
         [{"text": "💬 Повідомлення", "callback_data": f"customer_messages_{user_id}"}],
@@ -2369,6 +2571,7 @@ def get_customer_actions_menu(user_id: int):
     return create_inline_keyboard(keyboard)
 
 def get_order_status_keyboard(order_id: int, order_type: str = 'regular'):
+    """Клавіатура для зміни статусу замовлення"""
     keyboard = [
         [{"text": "✅ Підтвердити", "callback_data": f"order_confirm_{order_id}_{order_type}"}],
         [{"text": "📦 Упаковано", "callback_data": f"order_packed_{order_id}_{order_type}"}],
@@ -2381,6 +2584,7 @@ def get_order_status_keyboard(order_id: int, order_type: str = 'regular'):
     return create_inline_keyboard(keyboard)
 
 def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
+    """Клавіатура пагінації для замовлень"""
     buttons = []
     if has_more:
         buttons.append([{"text": "📋 Ще 5 замовлень", "callback_data": "admin_order_more"}])
@@ -2389,6 +2593,7 @@ def get_orders_pagination_keyboard(user_id: int, has_more: bool = True):
     return create_inline_keyboard(buttons)
 
 def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
+    """Клавіатура пагінації для повідомлень"""
     buttons = []
     if has_more:
         buttons.append([{"text": "📋 Ще 5 повідомлень", "callback_data": "admin_messages_more"}])
@@ -2397,6 +2602,7 @@ def get_messages_pagination_keyboard(user_id: int, has_more: bool = True):
     return create_inline_keyboard(buttons)
 
 def get_product_image_keyboard(product_id: int, has_image: bool = False) -> InlineKeyboardMarkup:
+    """Клавіатура для керування фото товару"""
     buttons = []
     buttons.append([{"text": "🌐 Завантажити за URL", "callback_data": f"edit_product_image_url_{product_id}"}])
     buttons.append([{"text": "📷 Завантажити файл", "callback_data": f"edit_product_image_file_{product_id}"}])
@@ -2406,27 +2612,33 @@ def get_product_image_keyboard(product_id: int, has_image: bool = False) -> Inli
     return create_inline_keyboard(buttons)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробник команди /start"""
     user = update.effective_user
     user_id = user.id
     
+    logger.info(f"👤 Адмін {user_id} (@{user.username}) викликав /start")
+    
     # Спочатку перевіряємо через ADMIN_IDS (перші адміни)
     if ADMIN_IDS and user_id in ADMIN_IDS:
-        # Це перший адмін - даємо доступ
+        logger.info(f"✅ Адмін {user_id} знайдений в ADMIN_IDS")
         admin_sessions[user_id] = {"state": "waiting_password"}
         await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
         return
     
     # Перевіряємо через базу даних
     if is_admin(user_id):
+        logger.info(f"✅ Адмін {user_id} знайдений в БД")
         admin_sessions[user_id] = {"state": "waiting_password"}
         await update.message.reply_text("🔐 Вхід в адмін-панель Бонелет\n\nБудь ласка, введіть пароль:")
         return
     
     # Якщо не пройшов жодну перевірку - доступ заборонено
+    logger.warning(f"❌ Спроба доступу неавторизованого користувача {user_id}")
     await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
     return
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробник натискань на кнопки"""
     try:
         query = update.callback_query
         await query.answer()
@@ -2438,6 +2650,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"🖱️ Адмін {user_id} натиснув: {data}")
         
         if not is_authenticated(user_id):
+            logger.warning(f"❌ Неавтентифікований адмін {user_id} спробував натиснути {data}")
             await query.edit_message_text("❌ Сесія закінчилась\n\nНапишіть /start для повторного входу")
             return
         
@@ -2446,6 +2659,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обробка кнопок "Назад"
         if data.startswith("back_to_"):
             target = data[8:]
+            logger.debug(f"Обробка back_to: {target}")
             
             if target == "faq_main":
                 await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
@@ -2474,8 +2688,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             reply_markup=InlineKeyboardMarkup(keyboard)
                         )
                         return
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Помилка обробки back_to_edit_product: {e}")
                 
                 await query.edit_message_text("📦 Керування товарами\n\nОберіть дію:", reply_markup=get_products_menu())
                 return
@@ -2513,6 +2727,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "admin_logout":
             admin_sessions.pop(user_id, None)
             last_password_check.pop(user_id, None)
+            logger.info(f"🔓 Адмін {user_id} вийшов з системи")
             await query.edit_message_text("🔐 Ви вийшли з адмін-панелі\n\nДля повторного входу напишіть /start")
             return
         
@@ -2616,8 +2831,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("faq_edit_"):
             try:
                 faq_id = int(data.split("_")[2])
+                logger.debug(f"Отримано запит на редагування FAQ #{faq_id}")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
+                    logger.warning(f"FAQ #{faq_id} не знайдено")
                     await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     return
                 
@@ -2629,19 +2846,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_faq_edit_menu(faq_id),
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_edit_question_"):
             try:
                 faq_id = int(data.split("_")[3])
+                logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
                     await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     return
                 
-                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_faq_question_{faq_id}"}
+                admin_sessions[user_id] = {
+                    "state": "authenticated", 
+                    "action": f"edit_faq_question_{faq_id}"
+                }
                 await query.edit_message_text(
                     f"✏️ Редагування питання FAQ #{faq_id}\n\n"
                     f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
@@ -2649,19 +2871,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_back_keyboard("faq"),
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_edit_answer_"):
             try:
                 faq_id = int(data.split("_")[3])
+                logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
                     await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     return
                 
-                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_faq_answer_{faq_id}"}
+                admin_sessions[user_id] = {
+                    "state": "authenticated", 
+                    "action": f"edit_faq_answer_{faq_id}"
+                }
                 await query.edit_message_text(
                     f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
                     f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
@@ -2669,13 +2896,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_back_keyboard("faq"),
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_move_up_"):
             try:
                 faq_id = int(data.split("_")[3])
+                logger.debug(f"Спроба перемістити FAQ #{faq_id} вгору")
                 if move_faq_up(faq_id):
                     await query.answer("✅ Переміщено вгору")
                 else:
@@ -2688,13 +2917,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_faq_list_keyboard(faqs),
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_move_down_"):
             try:
                 faq_id = int(data.split("_")[3])
+                logger.debug(f"Спроба перемістити FAQ #{faq_id} вниз")
                 if move_faq_down(faq_id):
                     await query.answer("✅ Переміщено вниз")
                 else:
@@ -2707,13 +2938,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=get_faq_list_keyboard(faqs),
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_delete_"):
             try:
                 faq_id = int(data.split("_")[2])
+                logger.debug(f"Спроба видалити FAQ #{faq_id}")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
                     await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
@@ -2731,13 +2964,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=keyboard,
                     parse_mode='HTML'
                 )
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         elif data.startswith("faq_confirm_delete_"):
             try:
                 faq_id = int(data.split("_")[3])
+                logger.debug(f"Підтвердження видалення FAQ #{faq_id}")
                 if delete_faq(faq_id):
                     await query.answer("✅ FAQ видалено")
                     faqs = get_all_faqs()
@@ -2751,7 +2986,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await query.edit_message_text("❓ FAQ порожній", reply_markup=get_faq_main_menu())
                 else:
                     await query.edit_message_text("❌ Помилка при видаленні", reply_markup=get_back_keyboard("faq"))
-            except (IndexError, ValueError):
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}")
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
@@ -3969,6 +4205,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обробник текстових повідомлень та фото"""
     try:
         user = update.effective_user
         user_id = user.id
@@ -3990,6 +4227,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ========== ОБРОБКА РЕДАГУВАННЯ КОМПАНІЇ ==========
         
         if action == "edit_company_text":
+            logger.debug(f"Оновлення тексту компанії: довжина {len(text)}")
             if update_company_info(text, user_id):
                 await update.message.reply_text(
                     "✅ Текст 'Про компанію' успішно оновлено!",
@@ -4006,6 +4244,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ========== ОБРОБКА РЕДАГУВАННЯ ВІТАННЯ ==========
         
         if action == "edit_welcome_text":
+            logger.debug(f"Оновлення вітального повідомлення: довжина {len(text)}")
             if update_welcome_message(text, user_id):
                 await update.message.reply_text(
                     "✅ Вітальне повідомлення успішно оновлено!",
@@ -4022,6 +4261,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ========== ОБРОБКА ДОДАВАННЯ FAQ ==========
         
         elif action == "add_faq_question":
+            logger.debug(f"Додавання FAQ: отримано питання: {text[:30]}...")
             admin_sessions[user_id]["faq_question"] = text
             admin_sessions[user_id]["action"] = "add_faq_answer"
             await update.message.reply_text(
@@ -4034,6 +4274,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "add_faq_answer":
             question = session.get("faq_question")
             answer = text
+            logger.debug(f"Додавання FAQ: питання: {question[:30]}..., відповідь: {answer[:30]}...")
             faq_id = add_faq(question, answer)
             if faq_id:
                 await update.message.reply_text(
@@ -4053,16 +4294,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action.startswith("edit_faq_question_"):
             try:
                 faq_id = int(action.split("_")[3])
+                logger.debug(f"Редагування питання FAQ #{faq_id}, нове питання: {text[:30]}...")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
+                    logger.warning(f"FAQ #{faq_id} не знайдено")
                     await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     admin_sessions[user_id].pop("action", None)
                     return
                 
                 if update_faq(faq_id, text, faq['answer']):
                     await update.message.reply_text(
-                        f"✅ Питання FAQ #{faq_id} оновлено!",
-                        reply_markup=get_faq_edit_menu(faq_id)
+                        f"✅ Питання FAQ #{faq_id} оновлено!\n\n"
+                        f"<b>Нове питання:</b> {text}",
+                        reply_markup=get_faq_edit_menu(faq_id),
+                        parse_mode='HTML'
                     )
                 else:
                     await update.message.reply_text(
@@ -4078,16 +4323,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action.startswith("edit_faq_answer_"):
             try:
                 faq_id = int(action.split("_")[3])
+                logger.debug(f"Редагування відповіді FAQ #{faq_id}, нова відповідь: {text[:30]}...")
                 faq = get_faq_by_id(faq_id)
                 if not faq:
+                    logger.warning(f"FAQ #{faq_id} не знайдено")
                     await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     admin_sessions[user_id].pop("action", None)
                     return
                 
                 if update_faq(faq_id, faq['question'], text):
                     await update.message.reply_text(
-                        f"✅ Відповідь FAQ #{faq_id} оновлено!",
-                        reply_markup=get_faq_edit_menu(faq_id)
+                        f"✅ Відповідь FAQ #{faq_id} оновлено!\n\n"
+                        f"<b>Нова відповідь:</b> {text}",
+                        reply_markup=get_faq_edit_menu(faq_id),
+                        parse_mode='HTML'
                     )
                 else:
                     await update.message.reply_text(
@@ -4439,6 +4688,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "change_password":
             global ADMIN_PASSWORD
             ADMIN_PASSWORD = text
+            logger.info(f"🔑 Пароль змінено адміном {user_id}")
             await update.message.reply_text("✅ Пароль успішно змінено!", reply_markup=get_settings_menu())
             admin_sessions[user_id].pop("action", None)
             return
@@ -4461,6 +4711,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         else:
+            logger.warning(f"❌ Невідома команда від адміна {user_id}: {action}")
             await update.message.reply_text("❌ Невідома команда", reply_markup=get_main_menu())
             
     except Exception as e:
@@ -4472,6 +4723,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int = None):
+    """Розсилка всім користувачам"""
     users = get_all_users()
     sent_count = 0
     fail_count = 0
@@ -4542,6 +4794,7 @@ async def send_broadcast_to_all(admin_bot: Bot, message: str, admin_user_id: int
     return sent_count, fail_count
 
 async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, admin_user_id: int = None):
+    """Розсилка за сегментом клієнтів"""
     users = get_all_users()
     sent_count = 0
     fail_count = 0
@@ -4622,7 +4875,10 @@ async def send_broadcast_to_segment(admin_bot: Bot, segment: str, message: str, 
     return sent_count, fail_count
 
 def main():
-    logger.info("🚀 Запуск адмін-бота Бонелет...")
+    """Головна функція запуску бота"""
+    logger.info("=" * 80)
+    logger.info("🚀 ЗАПУСК АДМІН-БОТА БОНЕЛЕТ")
+    logger.info("=" * 80)
     
     try:
         conn = get_db_connection()
@@ -4644,8 +4900,19 @@ def main():
                 quick_orders_count = cursor.fetchone()['count']
                 cursor.execute("SELECT COUNT(*) FROM messages")
                 messages_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) FROM faq")
+                faq_count = cursor.fetchone()['count']
+                cursor.execute("SELECT COUNT(*) FROM admins")
+                admins_count = cursor.fetchone()['count']
                 
-                logger.info(f"📊 Статистика БД: {users_count} користувачів, {orders_count} замовлень, {quick_orders_count} швидких замовлень, {products_count} товарів, {messages_count} повідомлень")
+                logger.info(f"📊 Статистика БД:")
+                logger.info(f"   • Користувачів: {users_count}")
+                logger.info(f"   • Замовлень: {orders_count}")
+                logger.info(f"   • Швидких замовлень: {quick_orders_count}")
+                logger.info(f"   • Товарів: {products_count}")
+                logger.info(f"   • Повідомлень: {messages_count}")
+                logger.info(f"   • FAQ: {faq_count}")
+                logger.info(f"   • Адмінів: {admins_count}")
                 
             except Exception as e:
                 logger.error(f"❌ Помилка отримання статистики: {e}")
@@ -4664,6 +4931,7 @@ def main():
         application.add_handler(MessageHandler(filters.PHOTO, message_handler))
         
         logger.info("✅ Адмін-бот готовий до роботи")
+        logger.info("🚀 Запуск polling...")
         application.run_polling(drop_pending_updates=True)
         
     except Exception as e:
