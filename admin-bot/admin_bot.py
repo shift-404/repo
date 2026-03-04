@@ -13,10 +13,20 @@ import traceback
 import time
 import requests
 
-# Налаштування логування з детальним виведенням
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes
+)
+from telegram import Bot  # Додайте цей імпорт!
+
 logging.basicConfig(
-    format='%(asctime)s - ADMIN - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    level=logging.DEBUG,  # Змінено на DEBUG для детального логування
+    format='%(astime)s - ADMIN - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+    level=logging.DEBUG,
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler('admin_bot_debug.log', encoding='utf-8')
@@ -4941,3 +4951,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
