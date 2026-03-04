@@ -214,6 +214,7 @@ def init_database_if_empty():
                 category TEXT,
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
+                image TEXT,
                 image_data BYTEA,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -260,6 +261,12 @@ def init_database_if_empty():
         ''')
         
         # Додаємо колонку image_data якщо її немає
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT')
+            logger.info("✅ Колонка image додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки image: {e}")
+        
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
             logger.info("✅ Колонка image_data додана до таблиці products")
@@ -1693,7 +1700,7 @@ def add_product(name: str, price: float, category: str, description: str, unit: 
         return None
     finally:
         conn.close()
-        
+
 def delete_product(product_id: int):
     conn = get_db_connection()
     if not conn:
@@ -2418,26 +2425,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Якщо не пройшов жодну перевірку - доступ заборонено
     await update.message.reply_text("❌ Доступ заборонено\n\nВи не маєте прав адміністратора.")
     return
-
-async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    text = update.message.text.strip()
-    
-    if user_id not in admin_sessions or admin_sessions[user_id].get("state") != "waiting_password":
-        return
-    
-    if text == ADMIN_PASSWORD:
-        admin_sessions[user_id] = {"state": "authenticated", "authenticated_at": get_kyiv_time().isoformat()}
-        last_password_check[user_id] = get_kyiv_time()
-        
-        if not is_admin(user_id):
-            add_admin(user_id, user.username or "", user_id)
-        
-        await update.message.reply_text("✅ Пароль прийнято!\n\nЛаскаво прошу до адмін-панелі.", reply_markup=get_main_menu())
-    else:
-        await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
-        admin_sessions.pop(user_id, None)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -4686,4 +4673,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
