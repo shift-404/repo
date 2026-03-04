@@ -154,6 +154,7 @@ def init_database():
                 category TEXT,
                 description TEXT,
                 unit TEXT DEFAULT 'банка',
+                image TEXT,
                 image_data BYTEA,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -198,6 +199,13 @@ def init_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Додаємо колонку image якщо її немає
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT')
+            logger.info("✅ Колонка image додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки image: {e}")
         
         # Додаємо колонку image_data якщо її немає
         try:
@@ -347,7 +355,7 @@ def get_faq_by_id(faq_id: int) -> Optional[Dict]:
     
     try:
         cursor = conn.cursor()
-        cursor.execute('SELECT question, answer FROM faq WHERE id = %s', (faq_id,))
+        cursor.execute('SELECT id, question, answer FROM faq WHERE id = %s', (faq_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
     except Exception as e:
@@ -897,39 +905,35 @@ class Database:
             conn.close()
     
     @staticmethod
-# В класі Database, метод get_all_products():
-@staticmethod
-def get_all_products():
-    conn = Database.get_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        # Додаємо image назад у запит
-        cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
-        rows = cursor.fetchall()
+    def get_all_products():
+        conn = Database.get_connection()
+        if not conn:
+            return []
         
-        products = []
-        for row in rows:
-            product = {
-                "id": row['id'],
-                "name": row['name'],
-                "price": row['price'],
-                "category": row['category'],
-                "description": row['description'],
-                "unit": row['unit'],
-                "image": row['image'],  # Це поле тепер знову є
-                "details": row['details']
-            }
-            products.append(product)
-        return products
-    except Exception as e:
-        logger.error(f"Помилка отримання товарів: {e}")
-        return []
-    finally:
-        conn.close()
-
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
+            rows = cursor.fetchall()
+            
+            products = []
+            for row in rows:
+                product = {
+                    "id": row['id'],
+                    "name": row['name'],
+                    "price": row['price'],
+                    "category": row['category'],
+                    "description": row['description'],
+                    "unit": row['unit'],
+                    "image": row['image'],
+                    "details": row['details']
+                }
+                products.append(product)
+            return products
+        except Exception as e:
+            logger.error(f"Помилка отримання товарів: {e}")
+            return []
+        finally:
+            conn.close()
     
     @staticmethod
     def get_product_image(product_id: int):
@@ -1364,7 +1368,6 @@ def get_company_text() -> str:
     # Отримуємо актуальний текст з БД
     return get_company_info()
 
-# Оновіть функцію get_product_text():
 def get_product_text(product_id: int) -> str:
     refresh_products()
     product = next((p for p in PRODUCTS if p["id"] == product_id), None)
@@ -2412,4 +2415,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
