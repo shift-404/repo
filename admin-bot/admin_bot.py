@@ -2837,33 +2837,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
-elif data.startswith("faq_edit_question_"):
+    elif data.startswith("faq_edit_question_"):
+        try:
+            # Розбираємо data: faq_edit_question_2
+            parts = data.split("_")
+            logger.debug(f"Розбираємо faq_edit_question_: {parts}")
+            
+            if len(parts) >= 4:
+                faq_id = int(parts[3])  # Беремо четверту частину
+                logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
+                
+                faq = get_faq_by_id(faq_id)
+                if not faq:
+                    logger.warning(f"FAQ #{faq_id} не знайдено")
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                    return
+                
+                # Зберігаємо в сесії ID для подальшого використання
+                admin_sessions[user_id] = {
+                    "state": "authenticated", 
+                    "action": f"edit_faq_question_{faq_id}"
+                }
+                logger.debug(f"Встановлено action: edit_faq_question_{faq_id}")
+                
+                await query.edit_message_text(
+                    f"✏️ Редагування питання FAQ #{faq_id}\n\n"
+                    f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
+                    f"📝 Введіть нове питання:",
+                    reply_markup=get_back_keyboard("faq"),
+                    parse_mode='HTML'
+                )
+            else:
+                logger.error(f"Неправильний формат callback_data: {data}")
+                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
+        except (IndexError, ValueError) as e:
+            logger.error(f"Помилка парсингу ID: {e}, data: {data}")
+            logger.error(traceback.format_exc())
+            await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+        return
+
+elif data.startswith("faq_edit_answer_"):
     try:
-        # Розбираємо data: faq_edit_question_2
+        # Розбираємо data: faq_edit_answer_2
         parts = data.split("_")
-        logger.debug(f"Розбираємо faq_edit_question_: {parts}")
+        logger.debug(f"Розбираємо faq_edit_answer_: {parts}")
         
         if len(parts) >= 4:
             faq_id = int(parts[3])  # Беремо четверту частину
-            logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
+            logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
             
             faq = get_faq_by_id(faq_id)
             if not faq:
-                logger.warning(f"FAQ #{faq_id} не знайдено")
                 await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                 return
             
             # Зберігаємо в сесії ID для подальшого використання
             admin_sessions[user_id] = {
                 "state": "authenticated", 
-                "action": f"edit_faq_question_{faq_id}"
+                "action": f"edit_faq_answer_{faq_id}"
             }
-            logger.debug(f"Встановлено action: edit_faq_question_{faq_id}")
+            logger.debug(f"Встановлено action: edit_faq_answer_{faq_id}")
             
             await query.edit_message_text(
-                f"✏️ Редагування питання FAQ #{faq_id}\n\n"
-                f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
-                f"📝 Введіть нове питання:",
+                f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
+                f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
+                f"📝 Введіть нову відповідь:",
                 reply_markup=get_back_keyboard("faq"),
                 parse_mode='HTML'
             )
@@ -4969,5 +5007,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
