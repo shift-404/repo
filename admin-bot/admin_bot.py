@@ -2837,139 +2837,80 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
-    elif data.startswith("faq_edit_question_"):
-        try:
-            # Розбираємо data: faq_edit_question_2
-            parts = data.split("_")
-            logger.debug(f"Розбираємо faq_edit_question_: {parts}")
-            
-            if len(parts) >= 4:
-                faq_id = int(parts[3])  # Беремо четверту частину
-                logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
-                
-                faq = get_faq_by_id(faq_id)
-                if not faq:
-                    logger.warning(f"FAQ #{faq_id} не знайдено")
-                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
-                    return
-                
-                # Зберігаємо в сесії ID для подальшого використання
-                admin_sessions[user_id] = {
-                    "state": "authenticated", 
-                    "action": f"edit_faq_question_{faq_id}"
-                }
-                logger.debug(f"Встановлено action: edit_faq_question_{faq_id}")
-                
-                await query.edit_message_text(
-                    f"✏️ Редагування питання FAQ #{faq_id}\n\n"
-                    f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
-                    f"📝 Введіть нове питання:",
-                    reply_markup=get_back_keyboard("faq"),
-                    parse_mode='HTML'
-                )
-            else:
-                logger.error(f"Неправильний формат callback_data: {data}")
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
-        except (IndexError, ValueError) as e:
-            logger.error(f"Помилка парсингу ID: {e}, data: {data}")
-            logger.error(traceback.format_exc())
-            await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
-        return
-
-elif data.startswith("faq_edit_answer_"):
-    try:
-        # Розбираємо data: faq_edit_answer_2
-        parts = data.split("_")
-        logger.debug(f"Розбираємо faq_edit_answer_: {parts}")
-        
-        if len(parts) >= 4:
-            faq_id = int(parts[3])  # Беремо четверту частину
-            logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
-            
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
-                return
-            
-            # Зберігаємо в сесії ID для подальшого використання
-            admin_sessions[user_id] = {
-                "state": "authenticated", 
-                "action": f"edit_faq_answer_{faq_id}"
-            }
-            logger.debug(f"Встановлено action: edit_faq_answer_{faq_id}")
-            
-            await query.edit_message_text(
-                f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
-                f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
-                f"📝 Введіть нову відповідь:",
-                reply_markup=get_back_keyboard("faq"),
-                parse_mode='HTML'
-            )
-        else:
-            logger.error(f"Неправильний формат callback_data: {data}")
-            await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
-    except (IndexError, ValueError) as e:
-        logger.error(f"Помилка парсингу ID: {e}, data: {data}")
-        logger.error(traceback.format_exc())
-        await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
-    return
-        
-elif data.startswith("faq_edit_answer_"):
-    try:
-        # Розбираємо data: faq_edit_answer_2
-        parts = data.split("_")
-        logger.debug(f"Розбираємо faq_edit_answer_: {parts}")
-        
-        if len(parts) >= 4:
-            faq_id = int(parts[3])  # Беремо четверту частину
-            logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
-            
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
-                return
-            
-            # Зберігаємо в сесії ID для подальшого використання
-            admin_sessions[user_id] = {
-                "state": "authenticated", 
-                "action": f"edit_faq_answer_{faq_id}"
-            }
-            logger.debug(f"Встановлено action: edit_faq_answer_{faq_id}")
-            
-            await query.edit_message_text(
-                f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
-                f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
-                f"📝 Введіть нову відповідь:",
-                reply_markup=get_back_keyboard("faq"),
-                parse_mode='HTML'
-            )
-        else:
-            logger.error(f"Неправильний формат callback_data: {data}")
-            await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
-    except (IndexError, ValueError) as e:
-        logger.error(f"Помилка парсингу ID: {e}, data: {data}")
-        logger.error(traceback.format_exc())
-        await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
-    return
-        
-        elif data.startswith("faq_move_up_"):
+        elif data.startswith("faq_edit_question_"):
             try:
-                faq_id = int(data.split("_")[3])
-                logger.debug(f"Спроба перемістити FAQ #{faq_id} вгору")
-                if move_faq_up(faq_id):
-                    await query.answer("✅ Переміщено вгору")
-                else:
-                    await query.answer("❌ Вже на початку", show_alert=False)
+                # Розбираємо data: faq_edit_question_2
+                parts = data.split("_")
+                logger.debug(f"Розбираємо faq_edit_question_: {parts}")
                 
-                # Повертаємось до списку
-                faqs = get_all_faqs()
-                await query.edit_message_text(
-                    "❓ <b>Список питань:</b>\n\nВиберіть питання для редагування:",
-                    reply_markup=get_faq_list_keyboard(faqs),
-                    parse_mode='HTML'
-                )
+                if len(parts) >= 4:
+                    faq_id = int(parts[3])  # Беремо четверту частину
+                    logger.debug(f"Отримано запит на редагування питання FAQ #{faq_id}")
+                    
+                    faq = get_faq_by_id(faq_id)
+                    if not faq:
+                        logger.warning(f"FAQ #{faq_id} не знайдено")
+                        await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                        return
+                    
+                    # Зберігаємо в сесії ID для подальшого використання
+                    admin_sessions[user_id] = {
+                        "state": "authenticated", 
+                        "action": f"edit_faq_question_{faq_id}"
+                    }
+                    logger.debug(f"Встановлено action: edit_faq_question_{faq_id}")
+                    
+                    await query.edit_message_text(
+                        f"✏️ Редагування питання FAQ #{faq_id}\n\n"
+                        f"📋 <b>Поточне питання (скопіюйте його):</b>\n\n{faq['question']}\n\n"
+                        f"📝 Введіть нове питання:",
+                        reply_markup=get_back_keyboard("faq"),
+                        parse_mode='HTML'
+                    )
+                else:
+                    logger.error(f"Неправильний формат callback_data: {data}")
+                    await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
             except (IndexError, ValueError) as e:
-                logger.error(f"Помилка парсингу ID: {e}")
+                logger.error(f"Помилка парсингу ID: {e}, data: {data}")
+                logger.error(traceback.format_exc())
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            return
+
+        elif data.startswith("faq_edit_answer_"):
+            try:
+                # Розбираємо data: faq_edit_answer_2
+                parts = data.split("_")
+                logger.debug(f"Розбираємо faq_edit_answer_: {parts}")
+                
+                if len(parts) >= 4:
+                    faq_id = int(parts[3])  # Беремо четверту частину
+                    logger.debug(f"Отримано запит на редагування відповіді FAQ #{faq_id}")
+                    
+                    faq = get_faq_by_id(faq_id)
+                    if not faq:
+                        await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                        return
+                    
+                    # Зберігаємо в сесії ID для подальшого використання
+                    admin_sessions[user_id] = {
+                        "state": "authenticated", 
+                        "action": f"edit_faq_answer_{faq_id}"
+                    }
+                    logger.debug(f"Встановлено action: edit_faq_answer_{faq_id}")
+                    
+                    await query.edit_message_text(
+                        f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
+                        f"📋 <b>Поточна відповідь (скопіюйте її):</b>\n\n{faq['answer']}\n\n"
+                        f"📝 Введіть нову відповідь:",
+                        reply_markup=get_back_keyboard("faq"),
+                        parse_mode='HTML'
+                    )
+                else:
+                    logger.error(f"Неправильний формат callback_data: {data}")
+                    await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}, data: {data}")
+                logger.error(traceback.format_exc())
                 await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
@@ -4335,85 +4276,85 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ========== ОБРОБКА РЕДАГУВАННЯ FAQ ==========
         
- elif action.startswith("edit_faq_question_"):
-    try:
-        # Розбираємо action: edit_faq_question_2
-        parts = action.split("_")
-        logger.debug(f"Розбираємо action в message_handler: {parts}")
-        
-        if len(parts) >= 4:
-            faq_id = int(parts[3])
-            logger.debug(f"Збереження нового питання для FAQ #{faq_id}: {text[:30]}...")
-            
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                logger.warning(f"FAQ #{faq_id} не знайдено")
-                await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update_faq(faq_id, text, faq['answer']):
-                await update.message.reply_text(
-                    f"✅ Питання FAQ #{faq_id} оновлено!\n\n"
-                    f"<b>Нове питання:</b> {text}",
-                    reply_markup=get_faq_edit_menu(faq_id),
-                    parse_mode='HTML'
-                )
-                logger.info(f"✅ Питання FAQ #{faq_id} успішно оновлено")
-            else:
-                await update.message.reply_text(
-                    "❌ Помилка при оновленні",
-                    reply_markup=get_back_keyboard("faq")
-                )
-        else:
-            logger.error(f"Неправильний формат action: {action}")
-            await update.message.reply_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
-    except (IndexError, ValueError) as e:
-        logger.error(f"Помилка парсингу ID: {e}, action: {action}")
-        logger.error(traceback.format_exc())
-        await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
-    admin_sessions[user_id].pop("action", None)
-    return
+        elif action.startswith("edit_faq_question_"):
+            try:
+                # Розбираємо action: edit_faq_question_2
+                parts = action.split("_")
+                logger.debug(f"Розбираємо action в message_handler: {parts}")
+                
+                if len(parts) >= 4:
+                    faq_id = int(parts[3])
+                    logger.debug(f"Збереження нового питання для FAQ #{faq_id}: {text[:30]}...")
+                    
+                    faq = get_faq_by_id(faq_id)
+                    if not faq:
+                        logger.warning(f"FAQ #{faq_id} не знайдено")
+                        await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                        admin_sessions[user_id].pop("action", None)
+                        return
+                    
+                    if update_faq(faq_id, text, faq['answer']):
+                        await update.message.reply_text(
+                            f"✅ Питання FAQ #{faq_id} оновлено!\n\n"
+                            f"<b>Нове питання:</b> {text}",
+                            reply_markup=get_faq_edit_menu(faq_id),
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"✅ Питання FAQ #{faq_id} успішно оновлено")
+                    else:
+                        await update.message.reply_text(
+                            "❌ Помилка при оновленні",
+                            reply_markup=get_back_keyboard("faq")
+                        )
+                else:
+                    logger.error(f"Неправильний формат action: {action}")
+                    await update.message.reply_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}, action: {action}")
+                logger.error(traceback.format_exc())
+                await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            admin_sessions[user_id].pop("action", None)
+            return
 
-elif action.startswith("edit_faq_answer_"):
-    try:
-        # Розбираємо action: edit_faq_answer_2
-        parts = action.split("_")
-        logger.debug(f"Розбираємо action в message_handler: {parts}")
-        
-        if len(parts) >= 4:
-            faq_id = int(parts[3])
-            logger.debug(f"Збереження нової відповіді для FAQ #{faq_id}: {text[:30]}...")
-            
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                logger.warning(f"FAQ #{faq_id} не знайдено")
-                await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update_faq(faq_id, faq['question'], text):
-                await update.message.reply_text(
-                    f"✅ Відповідь FAQ #{faq_id} оновлено!\n\n"
-                    f"<b>Нова відповідь:</b> {text}",
-                    reply_markup=get_faq_edit_menu(faq_id),
-                    parse_mode='HTML'
-                )
-                logger.info(f"✅ Відповідь FAQ #{faq_id} успішно оновлено")
-            else:
-                await update.message.reply_text(
-                    "❌ Помилка при оновленні",
-                    reply_markup=get_back_keyboard("faq")
-                )
-        else:
-            logger.error(f"Неправильний формат action: {action}")
-            await update.message.reply_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
-    except (IndexError, ValueError) as e:
-        logger.error(f"Помилка парсингу ID: {e}, action: {action}")
-        logger.error(traceback.format_exc())
-        await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
-    admin_sessions[user_id].pop("action", None)
-    return
+        elif action.startswith("edit_faq_answer_"):
+            try:
+                # Розбираємо action: edit_faq_answer_2
+                parts = action.split("_")
+                logger.debug(f"Розбираємо action в message_handler: {parts}")
+                
+                if len(parts) >= 4:
+                    faq_id = int(parts[3])
+                    logger.debug(f"Збереження нової відповіді для FAQ #{faq_id}: {text[:30]}...")
+                    
+                    faq = get_faq_by_id(faq_id)
+                    if not faq:
+                        logger.warning(f"FAQ #{faq_id} не знайдено")
+                        await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
+                        admin_sessions[user_id].pop("action", None)
+                        return
+                    
+                    if update_faq(faq_id, faq['question'], text):
+                        await update.message.reply_text(
+                            f"✅ Відповідь FAQ #{faq_id} оновлено!\n\n"
+                            f"<b>Нова відповідь:</b> {text}",
+                            reply_markup=get_faq_edit_menu(faq_id),
+                            parse_mode='HTML'
+                        )
+                        logger.info(f"✅ Відповідь FAQ #{faq_id} успішно оновлено")
+                    else:
+                        await update.message.reply_text(
+                            "❌ Помилка при оновленні",
+                            reply_markup=get_back_keyboard("faq")
+                        )
+                else:
+                    logger.error(f"Неправильний формат action: {action}")
+                    await update.message.reply_text("❌ Помилка формату даних", reply_markup=get_back_keyboard("faq"))
+            except (IndexError, ValueError) as e:
+                logger.error(f"Помилка парсингу ID: {e}, action: {action}")
+                logger.error(traceback.format_exc())
+                await update.message.reply_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
+            admin_sessions[user_id].pop("action", None)
+            return
         
         # ========== ОБРОБКА ДОДАВАННЯ ТОВАРУ ==========
         
@@ -5007,6 +4948,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
