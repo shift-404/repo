@@ -200,14 +200,13 @@ def init_database():
             )
         ''')
         
-        # Додаємо колонку image якщо її немає
+        # Додаємо колонку image_data якщо її немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT')
             logger.info("✅ Колонка image додана до таблиці products")
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image: {e}")
         
-        # Додаємо колонку image_data якщо її немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
             logger.info("✅ Колонка image_data додана до таблиці products")
@@ -1239,15 +1238,16 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        # Додаємо емодзі перед назвою
-        emoji = product.get('image', '🥫')  # Якщо немає емодзі, використовуємо стандартне
-        button_text = f"{emoji} {product['name']}\n{product['price']} грн/{product['unit']}"
-        # Обмежуємо довжину тексту
+        # Дворядковий текст: назва на першому рядку, ціна на другому
+        button_text = f"{product['name']}\n{product['price']} грн/{product['unit']}"
+        
+        # Обмежуємо довжину тексту (макс 60 символів)
         if len(button_text) > 60:
             name_part = product['name'][:35] + "..." if len(product['name']) > 35 else product['name']
-            button_text = f"{emoji} {name_part}\n{product['price']} грн/{product['unit']}"
+            button_text = f"{name_part}\n{product['price']} грн/{product['unit']}"
             if len(button_text) > 60:
                 button_text = button_text[:57] + "..."
+        
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1374,28 +1374,37 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    emoji = product.get('image', '🥫')
-    text = f"""
-<b>{emoji} {product['name']}</b>
-
-📝 <i>{product['description']}</i>
-
-💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
-🏷️ <b>Категорія:</b> {product['category']}
-📦 <b>Наявність:</b> Є в наявності
-
-<b>📊 Характеристики:</b>
-• {product['details']}
-
-<b>🌟 Переваги:</b>
-• Вирощений на Одещині
-• Натуральне консервування
-• Без штучних добавок
-• Висока якість
-
-<b>💡 Як використовувати:</b>
-Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
-"""
+    # Отримуємо дані з БД
+    name = product.get('name', '')
+    description = product.get('description', '')
+    price = product.get('price', 0)
+    unit = product.get('unit', 'банка')
+    category = product.get('category', '')
+    details = product.get('details', '')
+    
+    # Формуємо текст ТІЛЬКИ з даних БД, без статичних блоків
+    text = f"<b>{name}</b>\n\n"
+    text += f"📝 {description}\n\n"
+    text += f"💰 <b>Ціна:</b> {price} грн/{unit}\n"
+    
+    if category:
+        text += f"🏷️ <b>Категорія:</b> {category}\n"
+    
+    text += f"📦 <b>Наявність:</b> Є в наявності\n\n"
+    
+    if details:
+        text += f"<b>📊 Характеристики:</b>\n• {details}\n\n"
+    
+    # Статичні блоки, які МОЖНА залишити, якщо вони не дублюються
+    text += f"<b>🌟 Переваги:</b>\n"
+    text += f"• Вирощений на Одещині\n"
+    text += f"• Натуральне консервування\n"
+    text += f"• Без штучних добавок\n"
+    text += f"• Висока якість\n\n"
+    
+    text += f"<b>💡 Як використовувати:</b>\n"
+    text += f"Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва."
+    
     return text
 
 def get_quick_order_text(product_id: int) -> str:
@@ -1404,9 +1413,8 @@ def get_quick_order_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    emoji = product.get('image', '🥫')
     return f"""
-<b>⚡ Швидке замовлення: {emoji} {product['name']}</b>
+<b>⚡ Швидке замовлення: {product['name']}</b>
 
 💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
 
