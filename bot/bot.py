@@ -1374,27 +1374,27 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
+    # Отримуємо дані з БД
+    name = product.get('name', '')
+    description = product.get('description', '')
+    price = product.get('price', 0)
+    unit = product.get('unit', 'банка')
+    category = product.get('category', '')
+    details = product.get('details', '')
     emoji = product.get('image', '🥫')
+    
+    # Формуємо текст ТІЛЬКИ з даних БД, без статичних блоків, які дублюються
     text = f"""
-<b>{emoji} {product['name']}</b>
+<b>{emoji} {name}</b>
 
-📝 <i>{product['description']}</i>
+📝 <i>{description}</i>
 
-💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
-🏷️ <b>Категорія:</b> {product['category']}
+💰 <b>Ціна:</b> {price} грн/{unit}
+🏷️ <b>Категорія:</b> {category if category else 'Не вказано'}
 📦 <b>Наявність:</b> Є в наявності
 
 <b>📊 Характеристики:</b>
-• {product['details']}
-
-<b>🌟 Переваги:</b>
-• Вирощений на Одещині
-• Натуральне консервування
-• Без штучних добавок
-• Висока якість
-
-<b>💡 Як використовувати:</b>
-Ідеально підходить як закуска, до салатів, м'ясних страв та як самостійна страва.
+• {details}
 """
     return text
 
@@ -1404,9 +1404,8 @@ def get_quick_order_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    emoji = product.get('image', '🥫')
     return f"""
-<b>⚡ Швидке замовлення: {emoji} {product['name']}</b>
+<b>⚡ Швидке замовлення: {product['name']}</b>
 
 💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
 
@@ -2415,3 +2414,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
