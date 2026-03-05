@@ -4365,48 +4365,53 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 
-        elif action.startswith("edit_faq_answer_"):
-            try:
-                faq_id = int(action.replace("edit_faq_answer_", ""))
-                logger.debug(f"Збереження нової відповіді для FAQ #{faq_id}: {text[:30]}...")
+elif action == "edit_faq_answer":
+    try:
+        faq_id = admin_sessions[user_id].get("faq_id")
 
-                faq = get_faq_by_id(faq_id)
-
-                if not faq:
-                    logger.warning(f"FAQ #{faq_id} не знайдено")
-                    await update.message.reply_text(
-                        "❌ FAQ не знайдено",
-                        reply_markup=get_back_keyboard("faq")
-                    )
-                    admin_sessions[user_id].pop("action", None)
-                    return
-
-                success = update_faq(faq_id, faq['question'], text)
-
-                if success:
-                    await update.message.reply_text(
-                        f"✅ Відповідь FAQ #{faq_id} оновлено!\n\n"
-                        f"<b>Нова відповідь:</b> {text}",
-                        reply_markup=get_faq_edit_menu(faq_id),
-                        parse_mode='HTML'
-                    )
-                    logger.info(f"✅ Відповідь FAQ #{faq_id} успішно оновлено")
-                else:
-                    await update.message.reply_text(
-                        "❌ Помилка при оновленні",
-                        reply_markup=get_back_keyboard("faq")
-                    )
-
-            except Exception as e:
-                logger.error(f"Помилка редагування відповіді FAQ: {e}")
-                logger.error(traceback.format_exc())
-                await update.message.reply_text(
-                    "❌ Сталася помилка",
-                    reply_markup=get_back_keyboard("faq")
-                )
-
+        if not faq_id:
+            await update.message.reply_text(
+                "❌ Помилка: ID FAQ не знайдено",
+                reply_markup=get_back_keyboard("faq")
+            )
             admin_sessions[user_id].pop("action", None)
             return
+
+        logger.debug(f"Збереження нової відповіді для FAQ #{faq_id}")
+
+        faq = get_faq_by_id(faq_id)
+
+        if not faq:
+            await update.message.reply_text(
+                "❌ FAQ не знайдено",
+                reply_markup=get_back_keyboard("faq")
+            )
+            admin_sessions[user_id].pop("action", None)
+            return
+
+        if update_faq(faq_id, faq['question'], text):
+            await update.message.reply_text(
+                f"✅ Відповідь FAQ #{faq_id} оновлено!\n\n"
+                f"<b>Нова відповідь:</b> {text}",
+                reply_markup=get_faq_edit_menu(faq_id),
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Помилка при оновленні",
+                reply_markup=get_back_keyboard("faq")
+            )
+
+    except Exception as e:
+        logger.error(f"Помилка редагування FAQ: {e}")
+        await update.message.reply_text(
+            "❌ Сталась помилка",
+            reply_markup=get_back_keyboard("faq")
+        )
+
+    admin_sessions[user_id].pop("action", None)
+    admin_sessions[user_id].pop("faq_id", None)
+    return
         
         # ========== ОБРОБКА ДОДАВАННЯ ТОВАРУ ==========
         
@@ -5016,4 +5021,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
