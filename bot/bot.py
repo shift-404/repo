@@ -157,6 +157,8 @@ def init_database():
                 image TEXT,
                 image_data BYTEA,
                 details TEXT,
+                benefits TEXT,
+                usage TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -200,19 +202,31 @@ def init_database():
             )
         ''')
         
-        # Додаємо колонку image якщо її немає
+        # Додаємо колонки якщо їх немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image TEXT')
             logger.info("✅ Колонка image додана до таблиці products")
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image: {e}")
         
-        # Додаємо колонку image_data якщо її немає
         try:
             cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA')
             logger.info("✅ Колонка image_data додана до таблиці products")
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image_data: {e}")
+        
+        # Додаємо нові колонки для benefits та usage
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS benefits TEXT')
+            logger.info("✅ Колонка benefits додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки benefits: {e}")
+        
+        try:
+            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS usage TEXT')
+            logger.info("✅ Колонка usage додана до таблиці products")
+        except Exception as e:
+            logger.error(f"❌ Помилка додавання колонки usage: {e}")
         
         # Додаємо початкові дані для company_info, якщо їх немає
         cursor.execute("SELECT COUNT(*) FROM company_info")
@@ -912,7 +926,8 @@ class Database:
         
         try:
             cursor = conn.cursor()
-            cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
+            # Додаємо benefits та usage в запит
+            cursor.execute('SELECT id, name, price, category, description, unit, image, details, benefits, usage, created_at FROM products ORDER BY id')
             rows = cursor.fetchall()
             
             products = []
@@ -925,7 +940,9 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
-                    "details": row['details']
+                    "details": row['details'],
+                    "benefits": row.get('benefits', ''),
+                    "usage": row.get('usage', '')
                 }
                 products.append(product)
             return products
@@ -1239,15 +1256,16 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        # Додаємо емодзі перед назвою
-        emoji = product.get('image', '🥫')  # Якщо немає емодзі, використовуємо стандартне
-        button_text = f"{emoji} {product['name']}\n{product['price']} грн/{product['unit']}"
-        # Обмежуємо довжину тексту
+        # Дворядковий текст з назвою на першому рядку і ціною на другому
+        button_text = f"{product['name']}\n{product['price']} грн/{product['unit']}"
+        
+        # Обмежуємо довжину тексту (макс 60 символів)
         if len(button_text) > 60:
             name_part = product['name'][:35] + "..." if len(product['name']) > 35 else product['name']
-            button_text = f"{emoji} {name_part}\n{product['price']} грн/{product['unit']}"
+            button_text = f"{name_part}\n{product['price']} грн/{product['unit']}"
             if len(button_text) > 60:
                 button_text = button_text[:57] + "..."
+        
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1374,16 +1392,18 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    # Отримуємо дані з БД
+    # ВСЯ інформація береться з БД
     name = product.get('name', '')
     description = product.get('description', '')
     price = product.get('price', 0)
     unit = product.get('unit', 'банка')
     category = product.get('category', '')
     details = product.get('details', '')
+    benefits = product.get('benefits', '• Вирощений на Одещині\n• Натуральне консервування\n• Без штучних добавок\n• Висока якість')
+    usage = product.get('usage', 'Ідеально підходить як закуска, до салатів, м\'ясних страв та як самостійна страва.')
     emoji = product.get('image', '🥫')
     
-    # Формуємо текст ТІЛЬКИ з даних БД, без статичних блоків, які дублюються
+    # Формуємо текст ТІЛЬКИ з даних БД
     text = f"""
 <b>{emoji} {name}</b>
 
@@ -1395,6 +1415,12 @@ def get_product_text(product_id: int) -> str:
 
 <b>📊 Характеристики:</b>
 • {details}
+
+<b>🌟 Переваги:</b>
+{benefits}
+
+<b>💡 Як використовувати:</b>
+{usage}
 """
     return text
 
@@ -2414,4 +2440,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
