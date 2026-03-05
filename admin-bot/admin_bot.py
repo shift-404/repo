@@ -2405,7 +2405,7 @@ def get_main_menu():
         [{"text": "⚙️ Налаштування", "callback_data": "admin_settings"}],
         [{"text": "🏢 Редагувати 'Про компанію'", "callback_data": "admin_edit_company"}],
         [{"text": "👋 Редагувати вітання", "callback_data": "admin_edit_welcome"}],
-        [{"text": "❓ Редагувати FAQ", "callback_data": "admin_faq_edit"}],
+        [{"text": "❓ Редагувати FAQ", "callback_data": "admin_faq"}],
         [{"text": "🔐 Вийти", "callback_data": "admin_logout"}]
     ]
     return create_inline_keyboard(keyboard)
@@ -2535,38 +2535,35 @@ def get_welcome_edit_menu() -> InlineKeyboardMarkup:
     ]
     return create_inline_keyboard(buttons)
 
-# ========== НОВЕ МЕНЮ ДЛЯ РЕДАГУВАННЯ FAQ ==========
+# ========== МЕНЮ ДЛЯ РЕДАГУВАННЯ FAQ ==========
 
-def get_faq_edit_main_menu() -> InlineKeyboardMarkup:
-    """Головне меню редагування FAQ"""
+def get_faq_main_menu() -> InlineKeyboardMarkup:
+    """Головне меню FAQ"""
     buttons = [
-        [{"text": "📋 Список FAQ для редагування", "callback_data": "faq_edit_list"}],
-        [{"text": "➕ Додати нове питання", "callback_data": "faq_edit_add"}],
+        [{"text": "📋 Список FAQ", "callback_data": "faq_list"}],
+        [{"text": "➕ Додати питання", "callback_data": "faq_add"}],
+        [{"text": "❌ Видалити FAQ", "callback_data": "faq_delete_select"}],
         [{"text": "🔙 Назад", "callback_data": "back_to_main"}]
     ]
     return create_inline_keyboard(buttons)
 
-def get_faq_edit_list_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
-    """Клавіатура зі списком FAQ для редагування"""
+def get_faq_list_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
+    """Клавіатура зі списком FAQ для перегляду"""
     buttons = []
     for faq in faqs:
-        # Скорочуємо питання для кнопки
         short_q = faq['question'][:40] + "..." if len(faq['question']) > 40 else faq['question']
-        buttons.append([{"text": f"❓ {short_q}", "callback_data": f"faq_edit_select_{faq['id']}"}])
-    buttons.append([{"text": "➕ Додати нове", "callback_data": "faq_edit_add"}])
-    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_faq_edit_main"}])
+        buttons.append([{"text": f"❓ {short_q}", "callback_data": f"faq_view_{faq['id']}"}])
+    buttons.append([{"text": "➕ Додати нове", "callback_data": "faq_add"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_faq_main"}])
     return create_inline_keyboard(buttons)
 
-def get_faq_edit_actions_keyboard(faq_id: int) -> InlineKeyboardMarkup:
-    """Клавіатура дій для конкретного FAQ"""
-    buttons = [
-        [{"text": "✏️ Редагувати питання", "callback_data": f"faq_edit_question_{faq_id}"}],
-        [{"text": "✏️ Редагувати відповідь", "callback_data": f"faq_edit_answer_{faq_id}"}],
-        [{"text": "⬆️ Перемістити вгору", "callback_data": f"faq_edit_move_up_{faq_id}"}],
-        [{"text": "⬇️ Перемістити вниз", "callback_data": f"faq_edit_move_down_{faq_id}"}],
-        [{"text": "❌ Видалити", "callback_data": f"faq_edit_delete_{faq_id}"}],
-        [{"text": "🔙 Назад до списку", "callback_data": "faq_edit_list"}]
-    ]
+def get_faq_delete_keyboard(faqs: List[Dict]) -> InlineKeyboardMarkup:
+    """Клавіатура для видалення FAQ"""
+    buttons = []
+    for faq in faqs:
+        short_q = faq['question'][:40] + "..." if len(faq['question']) > 40 else faq['question']
+        buttons.append([{"text": f"❌ {short_q}", "callback_data": f"faq_delete_{faq['id']}"}])
+    buttons.append([{"text": "🔙 Назад", "callback_data": "back_to_faq_main"}])
     return create_inline_keyboard(buttons)
 
 def get_order_actions_menu(order_id: int, order_type: str = 'regular'):
@@ -2670,8 +2667,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target = data[8:]
             logger.debug(f"Обробка back_to: {target}")
             
-            if target == "faq_edit_main":
-                await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_edit_main_menu())
+            if target == "faq_main":
+                await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
                 return
             elif target.startswith("edit_product_"):
                 try:
@@ -2725,6 +2722,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             elif target == "welcome":
                 await query.edit_message_text("👋 Редагування вітального повідомлення\n\nОберіть дію:", reply_markup=get_welcome_edit_menu())
+                return
+            elif target == "faq":
+                await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
                 return
             else:
                 await query.edit_message_text("🔐 Адмін-панель Бонелет\n\nОберіть розділ:", reply_markup=get_main_menu())
@@ -2806,44 +2806,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # ========== НОВІ ОБРОБНИКИ ДЛЯ РЕДАГУВАННЯ FAQ ==========
+        # ========== ОБРОБНИКИ ДЛЯ FAQ ==========
         
-        elif data == "admin_faq_edit":
-            await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_edit_main_menu())
+        elif data == "admin_faq":
+            await query.edit_message_text("❓ Редагування FAQ\n\nОберіть дію:", reply_markup=get_faq_main_menu())
             return
         
-        elif data == "faq_edit_list":
+        elif data == "faq_list":
             faqs = get_all_faqs()
             if not faqs:
-                await query.edit_message_text("❓ FAQ порожній. Додайте нове питання.", reply_markup=get_faq_edit_main_menu())
+                await query.edit_message_text("❓ FAQ порожній. Додайте нове питання.", reply_markup=get_faq_main_menu())
                 return
             
             await query.edit_message_text(
-                "❓ <b>Виберіть FAQ для редагування:</b>",
-                reply_markup=get_faq_edit_list_keyboard(faqs),
+                "❓ <b>Список FAQ:</b>\n\nВиберіть питання для перегляду:",
+                reply_markup=get_faq_list_keyboard(faqs),
                 parse_mode='HTML'
             )
             return
         
-        elif data == "faq_edit_add":
-            admin_sessions[user_id] = {"state": "authenticated", "action": "faq_edit_add_question"}
-            await query.edit_message_text(
-                "➕ Додавання нового FAQ\n\nВведіть <b>питання</b>:",
-                reply_markup=get_back_keyboard("faq_edit_main"),
-                parse_mode='HTML'
-            )
-            return
-        
-        elif data.startswith("faq_edit_select_"):
+        elif data.startswith("faq_view_"):
             try:
-                faq_id = int(data.split("_")[3])
+                faq_id = int(data.split("_")[2])
                 faq = get_faq_by_id(faq_id)
                 if not faq:
-                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     return
-                
-                # Зберігаємо ID в сесії
-                admin_sessions[user_id]["current_faq_id"] = faq_id
                 
                 text = f"❓ <b>FAQ #{faq_id}</b>\n\n"
                 text += f"<b>Питання:</b> {faq['question']}\n\n"
@@ -2851,118 +2839,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 await query.edit_message_text(
                     text,
-                    reply_markup=get_faq_edit_actions_keyboard(faq_id),
+                    reply_markup=get_back_keyboard("faq_list"),
                     parse_mode='HTML'
                 )
             except (IndexError, ValueError) as e:
-                logger.error(f"Помилка вибору FAQ: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
+                logger.error(f"Помилка перегляду FAQ: {e}")
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
-        elif data.startswith("faq_edit_question_"):
+        elif data == "faq_add":
+            admin_sessions[user_id] = {"state": "authenticated", "action": "add_faq_question"}
+            await query.edit_message_text(
+                "➕ Додавання нового FAQ\n\nВведіть <b>питання</b>:",
+                reply_markup=get_back_keyboard("faq"),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data == "faq_delete_select":
+            faqs = get_all_faqs()
+            if not faqs:
+                await query.edit_message_text("❓ FAQ порожній. Немає що видаляти.", reply_markup=get_faq_main_menu())
+                return
+            
+            await query.edit_message_text(
+                "❌ <b>Виберіть FAQ для видалення:</b>",
+                reply_markup=get_faq_delete_keyboard(faqs),
+                parse_mode='HTML'
+            )
+            return
+        
+        elif data.startswith("faq_delete_"):
             try:
-                faq_id = int(data.split("_")[3])
+                faq_id = int(data.split("_")[2])
                 faq = get_faq_by_id(faq_id)
                 if not faq:
-                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
-                    return
-                
-                admin_sessions[user_id] = {
-                    "state": "authenticated",
-                    "action": f"faq_edit_update_question",
-                    "faq_id": faq_id
-                }
-                
-                await query.edit_message_text(
-                    f"✏️ Редагування питання FAQ #{faq_id}\n\n"
-                    f"📋 <b>Поточне питання:</b>\n{faq['question']}\n\n"
-                    f"📝 Введіть нове питання:",
-                    reply_markup=get_back_keyboard(f"faq_edit_select_{faq_id}"),
-                    parse_mode='HTML'
-                )
-            except (IndexError, ValueError) as e:
-                logger.error(f"Помилка редагування питання: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
-            return
-        
-        elif data.startswith("faq_edit_answer_"):
-            try:
-                faq_id = int(data.split("_")[3])
-                faq = get_faq_by_id(faq_id)
-                if not faq:
-                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
-                    return
-                
-                admin_sessions[user_id] = {
-                    "state": "authenticated",
-                    "action": f"faq_edit_update_answer",
-                    "faq_id": faq_id
-                }
-                
-                await query.edit_message_text(
-                    f"✏️ Редагування відповіді FAQ #{faq_id}\n\n"
-                    f"📋 <b>Поточна відповідь:</b>\n{faq['answer']}\n\n"
-                    f"📝 Введіть нову відповідь:",
-                    reply_markup=get_back_keyboard(f"faq_edit_select_{faq_id}"),
-                    parse_mode='HTML'
-                )
-            except (IndexError, ValueError) as e:
-                logger.error(f"Помилка редагування відповіді: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
-            return
-        
-        elif data.startswith("faq_edit_move_up_"):
-            try:
-                faq_id = int(data.split("_")[4])
-                if move_faq_up(faq_id):
-                    await query.answer("✅ Переміщено вгору")
-                else:
-                    await query.answer("❌ Вже на початку", show_alert=False)
-                
-                # Повертаємось до списку
-                faqs = get_all_faqs()
-                await query.edit_message_text(
-                    "❓ <b>Виберіть FAQ для редагування:</b>",
-                    reply_markup=get_faq_edit_list_keyboard(faqs),
-                    parse_mode='HTML'
-                )
-            except (IndexError, ValueError) as e:
-                logger.error(f"Помилка переміщення вгору: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
-            return
-        
-        elif data.startswith("faq_edit_move_down_"):
-            try:
-                faq_id = int(data.split("_")[4])
-                if move_faq_down(faq_id):
-                    await query.answer("✅ Переміщено вниз")
-                else:
-                    await query.answer("❌ Вже в кінці", show_alert=False)
-                
-                # Повертаємось до списку
-                faqs = get_all_faqs()
-                await query.edit_message_text(
-                    "❓ <b>Виберіть FAQ для редагування:</b>",
-                    reply_markup=get_faq_edit_list_keyboard(faqs),
-                    parse_mode='HTML'
-                )
-            except (IndexError, ValueError) as e:
-                logger.error(f"Помилка переміщення вниз: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
-            return
-        
-        elif data.startswith("faq_edit_delete_"):
-            try:
-                faq_id = int(data.split("_")[3])
-                faq = get_faq_by_id(faq_id)
-                if not faq:
-                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
+                    await query.edit_message_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq"))
                     return
                 
                 # Підтвердження видалення
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✅ Так, видалити", callback_data=f"faq_edit_confirm_delete_{faq_id}")],
-                    [InlineKeyboardButton("❌ Ні, скасувати", callback_data=f"faq_edit_select_{faq_id}")]
+                    [InlineKeyboardButton("✅ Так, видалити", callback_data=f"faq_confirm_delete_{faq_id}")],
+                    [InlineKeyboardButton("❌ Ні, скасувати", callback_data="faq_delete_select")]
                 ])
                 await query.edit_message_text(
                     f"❓ <b>Видалити FAQ?</b>\n\n"
@@ -2972,29 +2890,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='HTML'
                 )
             except (IndexError, ValueError) as e:
-                logger.error(f"Помилка видалення: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
+                logger.error(f"Помилка видалення FAQ: {e}")
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
-        elif data.startswith("faq_edit_confirm_delete_"):
+        elif data.startswith("faq_confirm_delete_"):
             try:
-                faq_id = int(data.split("_")[4])
+                faq_id = int(data.split("_")[3])
                 if delete_faq(faq_id):
                     await query.answer("✅ FAQ видалено")
-                    faqs = get_all_faqs()
-                    if faqs:
-                        await query.edit_message_text(
-                            "❓ <b>Виберіть FAQ для редагування:</b>",
-                            reply_markup=get_faq_edit_list_keyboard(faqs),
-                            parse_mode='HTML'
-                        )
-                    else:
-                        await query.edit_message_text("❓ FAQ порожній", reply_markup=get_faq_edit_main_menu())
+                    await query.edit_message_text(
+                        "✅ FAQ успішно видалено!",
+                        reply_markup=get_faq_main_menu()
+                    )
                 else:
-                    await query.edit_message_text("❌ Помилка при видаленні", reply_markup=get_back_keyboard("faq_edit_main"))
+                    await query.edit_message_text(
+                        "❌ Помилка при видаленні",
+                        reply_markup=get_back_keyboard("faq")
+                    )
             except (IndexError, ValueError) as e:
-                logger.error(f"Помилка підтвердження видалення: {e}")
-                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq_edit_main"))
+                logger.error(f"Помилка підтвердження видалення FAQ: {e}")
+                await query.edit_message_text("❌ Помилка", reply_markup=get_back_keyboard("faq"))
             return
         
         # ========== ІНШІ ОБРОБНИКИ ==========
@@ -3030,6 +2946,273 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard.append([InlineKeyboardButton(f"{p['id']}. {p['name'][:30]}", callback_data=f"edit_product_{p['id']}")])
             keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
             await query.edit_message_text("✏️ Редагування товару\n\nОберіть товар для редагування:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        # ============== ОБРОБНИКИ ДЛЯ РЕДАГУВАННЯ ПОЛІВ ТОВАРУ ==============
+        
+        elif data.startswith("edit_field_name_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_name", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування назви товару #{product_id}\n\n"
+                    f"📋 <b>Поточна назва:</b> {product['name']}\n\n"
+                    f"📝 Введіть нову назву:",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_price_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_price", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування ціни товару #{product_id}\n\n"
+                    f"📋 <b>Поточна ціна:</b> {product['price']} грн\n\n"
+                    f"📝 Введіть нову ціну (тільки число):",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_desc_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_desc", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування опису товару #{product_id}\n\n"
+                    f"📋 <b>Поточний опис:</b>\n{product.get('description', 'Опис відсутній')}\n\n"
+                    f"📝 Введіть новий опис:",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_cat_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_cat", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування категорії товару #{product_id}\n\n"
+                    f"📋 <b>Поточна категорія:</b> {product.get('category', 'Не вказано')}\n\n"
+                    f"📝 Введіть нову категорію:",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_unit_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_unit", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування одиниці виміру товару #{product_id}\n\n"
+                    f"📋 <b>Поточна одиниця:</b> {product.get('unit', 'банка')}\n\n"
+                    f"📝 Введіть нову одиницю виміру (наприклад: банка, кг, шт, л):",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_image_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                has_image = product and product.get('image_data') is not None
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_image", "product_id": product_id}
+                await query.edit_message_text(
+                    "📷 Виберіть спосіб завантаження фото:",
+                    reply_markup=get_product_image_keyboard(product_id, has_image)
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_details_"):
+            try:
+                product_id = int(parts[-1])
+                product = get_product_by_id(product_id)
+                if not product:
+                    await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                    return
+                
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_details", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Редагування деталей товару #{product_id}\n\n"
+                    f"📋 <b>Поточні деталі:</b>\n{product.get('details', 'Деталі відсутні')}\n\n"
+                    f"📝 Введіть нові деталі (об'єм, вага, склад тощо):",
+                    reply_markup=get_back_keyboard("products"),
+                    parse_mode='HTML'
+                )
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка", reply_markup=get_products_menu())
+            return
+        
+        elif data.startswith("edit_field_"):
+            parts = data.split("_")
+            if len(parts) < 4:
+                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
+                return
+            
+            field = parts[2]
+            try:
+                product_id = int(parts[-1])
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            if field == "image":
+                product = get_product_by_id(product_id)
+                has_image = product and product.get('image_data') is not None
+                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_image", "product_id": product_id}
+                await query.edit_message_text(
+                    "📷 Виберіть спосіб завантаження фото:",
+                    reply_markup=get_product_image_keyboard(product_id, has_image)
+                )
+                return
+            elif field == "unit":
+                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_unit", "product_id": product_id}
+                await query.edit_message_text(
+                    f"✏️ Введіть нову одиницю виміру (наприклад: банка, кг, шт, л):",
+                    reply_markup=get_back_keyboard("products")
+                )
+                return
+            
+            admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
+            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію", "details": "деталі"}
+            await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
+            return
+        
+        elif data.startswith("edit_product_"):
+            logger.info(f"📝 Натиснуто загальний edit_product_ з data: {data}")
+            
+            if data.count("_") > 2:
+                logger.warning(f"⚠️ Пропускаємо складний callback у загальному обробнику: {data}")
+                return
+            
+            try:
+                product_id = int(data.split("_")[2])
+                logger.info(f"✅ Розпарсено product_id: {product_id}")
+            except (IndexError, ValueError):
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            product = get_product_by_id(product_id)
+            if not product:
+                await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
+                return
+            
+            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_field", "product_id": product_id}
+            keyboard = [
+                [InlineKeyboardButton("📝 Назва", callback_data=f"edit_field_name_{product_id}")],
+                [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
+                [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
+                [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
+                [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
+                [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
+                [InlineKeyboardButton("📊 Деталі", callback_data=f"edit_field_details_{product_id}")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
+            ]
+            await query.edit_message_text(
+                f"✏️ Редагування товару #{product_id}\n\n"
+                f"Назва: {product['name']}\n"
+                f"Ціна: {product['price']} грн\n"
+                f"Одиниці: {product['unit']}\n"
+                f"Категорія: {product.get('category', 'Не вказано')}\n\n"
+                f"Оберіть поле для редагування:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        
+        elif data == "admin_product_delete":
+            products = get_all_products()
+            if not products:
+                await query.edit_message_text("❌ Товарів не знайдено", reply_markup=get_products_menu())
+                return
+            keyboard = []
+            for p in products[:20]:
+                keyboard.append([InlineKeyboardButton(f"❌ {p['id']}. {p['name'][:30]}", callback_data=f"delete_product_{p['id']}")])
+            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
+            await query.edit_message_text("🗑 Видалення товару\n\nОберіть товар для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        elif data.startswith("delete_product_"):
+            parts = data.split("_")
+            if len(parts) < 3:
+                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
+                return
+            
+            try:
+                product_id = int(parts[2])
+            except ValueError:
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Так, видалити", callback_data=f"confirm_delete_{product_id}")],
+                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_products")]
+            ]
+            await query.edit_message_text(f"🗑 Підтвердження видалення\n\nВи дійсно хочете видалити товар #{product_id}?", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        elif data.startswith("confirm_delete_"):
+            parts = data.split("_")
+            if len(parts) < 3:
+                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
+                return
+            
+            try:
+                product_id = int(parts[2])
+            except ValueError:
+                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
+                return
+            
+            if delete_product(product_id):
+                text = "✅ Товар успішно видалено!"
+            else:
+                text = "❌ Помилка при видаленні товару"
+            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         # ============== ОБРОБНИКИ ДЛЯ ФОТО ==============
@@ -3098,131 +3281,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
                 return
         
-        elif data.startswith("edit_field_"):
-            parts = data.split("_")
-            if len(parts) < 4:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
-            field = parts[2]
-            try:
-                product_id = int(parts[-1])
-            except (IndexError, ValueError):
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
-            
-            if field == "image":
-                product = get_product_by_id(product_id)
-                has_image = product and product.get('image_data') is not None
-                admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_image", "product_id": product_id}
-                await query.edit_message_text(
-                    "📷 Виберіть спосіб завантаження фото:",
-                    reply_markup=get_product_image_keyboard(product_id, has_image)
-                )
-                return
-            elif field == "unit":
-                admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_unit", "product_id": product_id}
-                await query.edit_message_text(
-                    f"✏️ Введіть нову одиницю виміру (наприклад: банка, кг, шт, л):",
-                    reply_markup=get_back_keyboard("products")
-                )
-                return
-            
-            admin_sessions[user_id] = {"state": "authenticated", "action": f"edit_product_{field}", "product_id": product_id}
-            field_names = {"name": "назву", "price": "ціну", "desc": "опис", "cat": "категорію"}
-            await query.edit_message_text(f"✏️ Введіть нову {field_names.get(field, '')}:", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif data.startswith("edit_product_"):
-            logger.info(f"📝 Натиснуто загальний edit_product_ з data: {data}")
-            
-            if data.count("_") > 2:
-                logger.warning(f"⚠️ Пропускаємо складний callback у загальному обробнику: {data}")
-                return
-            
-            try:
-                product_id = int(data.split("_")[2])
-                logger.info(f"✅ Розпарсено product_id: {product_id}")
-            except (IndexError, ValueError):
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
-            
-            product = get_product_by_id(product_id)
-            if not product:
-                await query.edit_message_text("❌ Товар не знайдено", reply_markup=get_products_menu())
-                return
-            
-            admin_sessions[user_id] = {"state": "authenticated", "action": "edit_product_field", "product_id": product_id}
-            keyboard = [
-                [InlineKeyboardButton("📝 Назва", callback_data=f"edit_field_name_{product_id}")],
-                [InlineKeyboardButton("💰 Ціна", callback_data=f"edit_field_price_{product_id}")],
-                [InlineKeyboardButton("📋 Опис", callback_data=f"edit_field_desc_{product_id}")],
-                [InlineKeyboardButton("🏷 Категорія", callback_data=f"edit_field_cat_{product_id}")],
-                [InlineKeyboardButton("📷 Фото", callback_data=f"edit_field_image_{product_id}")],
-                [InlineKeyboardButton("📏 Одиниці", callback_data=f"edit_field_unit_{product_id}")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]
-            ]
-            await query.edit_message_text(
-                f"✏️ Редагування товару #{product_id}\n\n"
-                f"Назва: {product['name']}\n"
-                f"Ціна: {product['price']} грн\n"
-                f"Одиниці: {product['unit']}\n\n"
-                f"Оберіть поле для редагування:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-        
-        elif data == "admin_product_delete":
-            products = get_all_products()
-            if not products:
-                await query.edit_message_text("❌ Товарів не знайдено", reply_markup=get_products_menu())
-                return
-            keyboard = []
-            for p in products[:20]:
-                keyboard.append([InlineKeyboardButton(f"❌ {p['id']}. {p['name'][:30]}", callback_data=f"delete_product_{p['id']}")])
-            keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")])
-            await query.edit_message_text("🗑 Видалення товару\n\nОберіть товар для видалення:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data.startswith("delete_product_"):
-            parts = data.split("_")
-            if len(parts) < 3:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
-            try:
-                product_id = int(parts[2])
-            except ValueError:
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
-            
-            keyboard = [
-                [InlineKeyboardButton("✅ Так, видалити", callback_data=f"confirm_delete_{product_id}")],
-                [InlineKeyboardButton("❌ Ні, скасувати", callback_data="back_to_products")]
-            ]
-            await query.edit_message_text(f"🗑 Підтвердження видалення\n\nВи дійсно хочете видалити товар #{product_id}?", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        elif data.startswith("confirm_delete_"):
-            parts = data.split("_")
-            if len(parts) < 3:
-                await query.edit_message_text("❌ Помилка формату даних", reply_markup=get_products_menu())
-                return
-            
-            try:
-                product_id = int(parts[2])
-            except ValueError:
-                await query.edit_message_text("❌ Помилка: некоректний ID товару", reply_markup=get_products_menu())
-                return
-            
-            if delete_product(product_id):
-                text = "✅ Товар успішно видалено!"
-            else:
-                text = "❌ Помилка при видаленні товару"
-            keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data="back_to_products")]]
-            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
+        # Інші обробники (замовлення, клієнти, повідомлення тощо)
         elif data == "admin_orders":
             await query.edit_message_text("📋 Керування замовленнями\n\nОберіть тип замовлень:", reply_markup=get_orders_menu())
             return
@@ -4257,20 +4316,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             admin_sessions[user_id].pop("action", None)
             return
         
-        # ========== НОВІ ОБРОБНИКИ ДЛЯ ДОДАВАННЯ ТА РЕДАГУВАННЯ FAQ ==========
+        # ========== ОБРОБКА ДОДАВАННЯ FAQ ==========
         
-        elif action == "faq_edit_add_question":
+        elif action == "add_faq_question":
             logger.debug(f"Додавання FAQ: отримано питання: {text[:30]}...")
             admin_sessions[user_id]["faq_question"] = text
-            admin_sessions[user_id]["action"] = "faq_edit_add_answer"
+            admin_sessions[user_id]["action"] = "add_faq_answer"
             await update.message.reply_text(
                 "📝 Введіть <b>відповідь</b> на питання:",
-                reply_markup=get_back_keyboard("faq_edit_main"),
+                reply_markup=get_back_keyboard("faq"),
                 parse_mode='HTML'
             )
             return
         
-        elif action == "faq_edit_add_answer":
+        elif action == "add_faq_answer":
             question = session.get("faq_question")
             answer = text
             logger.debug(f"Додавання FAQ: питання: {question[:30]}..., відповідь: {answer[:30]}...")
@@ -4278,143 +4337,149 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if faq_id:
                 await update.message.reply_text(
                     f"✅ FAQ додано! ID: {faq_id}",
-                    reply_markup=get_faq_edit_main_menu()
+                    reply_markup=get_faq_main_menu()
                 )
             else:
                 await update.message.reply_text(
                     "❌ Помилка при додаванні FAQ",
-                    reply_markup=get_faq_edit_main_menu()
+                    reply_markup=get_faq_main_menu()
                 )
             admin_sessions[user_id].pop("action", None)
             if "faq_question" in admin_sessions[user_id]:
                 admin_sessions[user_id].pop("faq_question")
             return
         
-        elif action == "faq_edit_update_question":
-            faq_id = session.get("faq_id")
-            if not faq_id:
-                await update.message.reply_text("❌ Помилка: ID FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
+        # ========== ОБРОБКА РЕДАГУВАННЯ ТОВАРІВ ==========
+        
+        elif action == "edit_product_name":
+            product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
                 admin_sessions[user_id].pop("action", None)
                 return
             
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update_faq(faq_id, text, faq['answer']):
+            if update_product(product_id, name=text):
                 await update.message.reply_text(
-                    f"✅ Питання FAQ #{faq_id} оновлено!",
-                    reply_markup=get_faq_edit_actions_keyboard(faq_id)
-                )
-            else:
-                await update.message.reply_text(
-                    "❌ Помилка при оновленні",
-                    reply_markup=get_back_keyboard(f"faq_edit_select_{faq_id}")
-                )
-            
-            admin_sessions[user_id].pop("action", None)
-            admin_sessions[user_id].pop("faq_id", None)
-            return
-        
-        elif action == "faq_edit_update_answer":
-            faq_id = session.get("faq_id")
-            if not faq_id:
-                await update.message.reply_text("❌ Помилка: ID FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            faq = get_faq_by_id(faq_id)
-            if not faq:
-                await update.message.reply_text("❌ FAQ не знайдено", reply_markup=get_back_keyboard("faq_edit_main"))
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update_faq(faq_id, faq['question'], text):
-                await update.message.reply_text(
-                    f"✅ Відповідь FAQ #{faq_id} оновлено!",
-                    reply_markup=get_faq_edit_actions_keyboard(faq_id)
-                )
-            else:
-                await update.message.reply_text(
-                    "❌ Помилка при оновленні",
-                    reply_markup=get_back_keyboard(f"faq_edit_select_{faq_id}")
-                )
-            
-            admin_sessions[user_id].pop("action", None)
-            admin_sessions[user_id].pop("faq_id", None)
-            return
-        
-        # ========== ОБРОБКА ДОДАВАННЯ ТОВАРУ ==========
-        
-        elif action == "add_product_name":
-            admin_sessions[user_id]["product_name"] = text
-            admin_sessions[user_id]["action"] = "add_product_price"
-            await update.message.reply_text("Введіть ціну товару (тільки число):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_price":
-            try:
-                price = float(text.replace(",", "."))
-                admin_sessions[user_id]["product_price"] = price
-                admin_sessions[user_id]["action"] = "add_product_category"
-                await update.message.reply_text("Введіть категорію товару:", reply_markup=get_back_keyboard("products"))
-            except ValueError:
-                await update.message.reply_text("❌ Невірний формат. Введіть число (наприклад: 250):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_category":
-            admin_sessions[user_id]["product_category"] = text
-            admin_sessions[user_id]["action"] = "add_product_description"
-            await update.message.reply_text("Введіть опис товару:", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_description":
-            admin_sessions[user_id]["product_description"] = text
-            admin_sessions[user_id]["action"] = "add_product_unit"
-            await update.message.reply_text("Введіть одиницю виміру (наприклад: банка, кг, шт):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_unit":
-            admin_sessions[user_id]["product_unit"] = text
-            admin_sessions[user_id]["action"] = "add_product_details"
-            await update.message.reply_text("Введіть деталі товару (об'єм, вага, склад тощо):", reply_markup=get_back_keyboard("products"))
-            return
-        
-        elif action == "add_product_details":
-            product_data = {
-                "name": session.get("product_name"),
-                "price": session.get("product_price"),
-                "category": session.get("product_category"),
-                "description": session.get("product_description"),
-                "unit": session.get("product_unit"),
-                "details": text
-            }
-            
-            product_id = add_product(**product_data)
-            
-            if product_id:
-                await update.message.reply_text(
-                    f"✅ Товар успішно додано!\n\nID: {product_id}\nНазва: {product_data['name']}\nЦіна: {product_data['price']} грн\nОдиниці: {product_data['unit']}",
+                    f"✅ Назву товару #{product_id} оновлено!",
                     reply_markup=get_products_menu()
                 )
             else:
-                await update.message.reply_text("❌ Помилка при додаванні товару", reply_markup=get_products_menu())
-            
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні",
+                    reply_markup=get_products_menu()
+                )
             admin_sessions[user_id].pop("action", None)
             return
         
-        # ============== ОБРОБНИКИ ДЛЯ РЕДАГУВАННЯ ТОВАРУ ==============
+        elif action == "edit_product_price":
+            product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
+            try:
+                price = float(text.replace(",", "."))
+                if update_product(product_id, price=price):
+                    await update.message.reply_text(
+                        f"✅ Ціну товару #{product_id} оновлено!",
+                        reply_markup=get_products_menu()
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Помилка при оновленні",
+                        reply_markup=get_products_menu()
+                    )
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ Невірний формат. Введіть число:",
+                    reply_markup=get_back_keyboard("products")
+                )
+                return
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action == "edit_product_desc":
+            product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
+            if update_product(product_id, description=text):
+                await update.message.reply_text(
+                    f"✅ Опис товару #{product_id} оновлено!",
+                    reply_markup=get_products_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні",
+                    reply_markup=get_products_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        elif action == "edit_product_cat":
+            product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
+            if update_product(product_id, category=text):
+                await update.message.reply_text(
+                    f"✅ Категорію товару #{product_id} оновлено!",
+                    reply_markup=get_products_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні",
+                    reply_markup=get_products_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
         
         elif action == "edit_product_unit":
             product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
             if update_product(product_id, unit=text):
-                await update.message.reply_text(f"✅ Одиниці товару #{product_id} оновлено!", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    f"✅ Одиниці товару #{product_id} оновлено!",
+                    reply_markup=get_products_menu()
+                )
             else:
-                await update.message.reply_text("❌ Помилка при оновленні одиниць", reply_markup=get_products_menu())
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні",
+                    reply_markup=get_products_menu()
+                )
             admin_sessions[user_id].pop("action", None)
             return
+        
+        elif action == "edit_product_details":
+            product_id = session.get("product_id")
+            if not product_id:
+                await update.message.reply_text("❌ Помилка: ID товару не знайдено", reply_markup=get_products_menu())
+                admin_sessions[user_id].pop("action", None)
+                return
+            
+            if update_product(product_id, details=text):
+                await update.message.reply_text(
+                    f"✅ Деталі товару #{product_id} оновлено!",
+                    reply_markup=get_products_menu()
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Помилка при оновленні",
+                    reply_markup=get_products_menu()
+                )
+            admin_sessions[user_id].pop("action", None)
+            return
+        
+        # ============== ОБРОБНИКИ ДЛЯ ФОТО ==============
         
         elif action == "edit_product_image_url":
             product_id = session.get("product_id")
@@ -4498,36 +4563,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # ============== ІНШІ ОБРОБНИКИ ==============
-        
-        elif action.startswith("edit_product_"):
-            field = action.replace("edit_product_", "")
-            product_id = session.get("product_id")
-            
-            update_data = {}
-            if field == "name":
-                update_data["name"] = text
-            elif field == "price":
-                try:
-                    update_data["price"] = float(text.replace(",", "."))
-                except ValueError:
-                    await update.message.reply_text("❌ Невірний формат. Введіть число:", reply_markup=get_back_keyboard("products"))
-                    return
-            elif field == "desc":
-                update_data["description"] = text
-            elif field == "cat":
-                update_data["category"] = text
-            else:
-                await update.message.reply_text("❌ Невідоме поле для редагування", reply_markup=get_products_menu())
-                admin_sessions[user_id].pop("action", None)
-                return
-            
-            if update_product(product_id, **update_data):
-                await update.message.reply_text(f"✅ Товар #{product_id} оновлено!", reply_markup=get_products_menu())
-            else:
-                await update.message.reply_text("❌ Помилка при оновленні товару", reply_markup=get_products_menu())
-            
-            admin_sessions[user_id].pop("action", None)
-            return
         
         elif action == "search_orders_by_phone":
             orders = get_orders_by_phone(text)
