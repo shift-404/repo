@@ -4140,6 +4140,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         if not is_authenticated(user_id):
+            logger.warning(f"❌ Неавтентифікований адмін {user_id} спробував надіслати повідомлення")
+            await update.message.reply_text(
+                "❌ Сесія закінчилась\n\nНапишіть /start для повторного входу",
+                reply_markup=get_main_menu()
+            )
             return
         
         session = admin_sessions.get(user_id, {})
@@ -4915,4 +4920,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
