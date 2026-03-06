@@ -1367,14 +1367,13 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    # Формуємо мінімалістичний текст товару тільки з назвою та описом
+    # Формуємо текст товару ТІЛЬКИ з поля description
     text = f"{product['name']}\n\n"
     text += f"{product['description']}\n\n"
     text += f"Ціна: {product['price']} грн/{product['unit']}"
     
-    # Якщо є деталі, додаємо їх окремим рядком
-    if product.get('details'):
-        text += f"\n\n{product['details']}"
+    # БІЛЬШЕ НІЧОГО НЕ ДОДАЄМО!
+    # Ніяких details, ніяких додаткових полів
     
     return text
 
@@ -2394,3 +2393,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
