@@ -796,20 +796,27 @@ broadcast_in_progress = {}
 
 def is_authenticated(user_id: int) -> bool:
     """Перевіряє чи автентифікований користувач"""
+    logger.debug(f"🔍 is_authenticated для {user_id}")
+    
     # Спочатку перевіряємо в пам'яті
-    if user_id in admin_sessions and admin_sessions[user_id].get("state") == "authenticated":
-        return True
+    if user_id in admin_sessions:
+        logger.debug(f"  - В пам'яті: {admin_sessions[user_id].get('state')}")
+        if admin_sessions[user_id].get("state") == "authenticated":
+            return True
     
     # Якщо немає в пам'яті, перевіряємо в БД
     session = load_admin_session(user_id)
+    logger.debug(f"  - В БД: {session.get('state')}")
+    
     if session.get("state") == "authenticated":
         # Відновлюємо в пам'яті
         admin_sessions[user_id] = session
         logger.info(f"✅ Сесію адміна {user_id} відновлено з БД")
         return True
     
+    logger.debug(f"❌ Користувач {user_id} не автентифікований")
     return False
-
+    
 async def download_image_from_url_to_bytes(url: str) -> bytes:
     """Завантажує зображення за URL і повертає як байти"""
     logger.info(f"🌐 Спроба завантажити URL: {url}")
@@ -2589,6 +2596,20 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     
     logger.info(f"👤 Адмін {user_id} викликав /login")
+    # Додайте цей блок для діагностики
+    logger.info(f"🔍 Діагностика для користувача {user_id}:")
+    logger.info(f"  - Дані callback: {data}")
+    logger.info(f"  - Чи є в admin_sessions: {user_id in admin_sessions}")
+    if user_id in admin_sessions:
+        logger.info(f"  - Стан сесії в пам'яті: {admin_sessions[user_id].get('state')}")
+        logger.info(f"  - Action в пам'яті: {admin_sessions[user_id].get('action')}")
+    else:
+        logger.info(f"  - Користувача НЕМАЄ в admin_sessions")
+    
+    # Перевіряємо БД
+    session_from_db = load_admin_session(user_id)
+    logger.info(f"  - Стан в БД: {session_from_db.get('state')}")
+    logger.info(f"  - Action в БД: {session_from_db.get('action')}")
     
     # Очищаємо стару сесію
     admin_sessions.pop(user_id, None)
@@ -5132,3 +5153,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
