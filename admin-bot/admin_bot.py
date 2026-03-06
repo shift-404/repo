@@ -112,7 +112,114 @@ def get_db_connection():
         logger.error(f"❌ Помилка підключення до БД: {e}")
         logger.error(traceback.format_exc())
         return None
+def save_admin_session(user_id: int, session_data: dict):
+    """Зберігає сесію адміна в БД"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Підготовка даних
+        state = session_data.get("state", "")
+        action = session_data.get("action", "")
+        product_id = session_data.get("product_id")
+        faq_id = session_data.get("faq_id")
+        customer_id = session_data.get("customer_id")
+        order_id = session_data.get("order_id")
+        order_type = session_data.get("order_type", "")
+        
+        # Видаляємо ключі, які не хочемо зберігати в temp_data
+        temp_data = {k: v for k, v in session_data.items() 
+                    if k not in ["state", "action", "product_id", "faq_id", 
+                                "customer_id", "order_id", "order_type"]}
+        temp_data_json = json.dumps(temp_data)
+        
+        cursor.execute('''
+            INSERT INTO admin_sessions 
+            (user_id, state, action, product_id, faq_id, customer_id, order_id, order_type, temp_data, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE SET
+                state = EXCLUDED.state,
+                action = EXCLUDED.action,
+                product_id = EXCLUDED.product_id,
+                faq_id = EXCLUDED.faq_id,
+                customer_id = EXCLUDED.customer_id,
+                order_id = EXCLUDED.order_id,
+                order_type = EXCLUDED.order_type,
+                temp_data = EXCLUDED.temp_data,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (user_id, state, action, product_id, faq_id, customer_id, order_id, order_type, temp_data_json))
+        
+        conn.commit()
+        logger.debug(f"✅ Сесію адміна {user_id} збережено в БД")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Помилка збереження сесії адміна: {e}")
+        return False
+    finally:
+        conn.close()
 
+def load_admin_session(user_id: int) -> dict:
+    """Завантажує сесію адміна з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return {"state": ""}
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT state, action, product_id, faq_id, customer_id, order_id, order_type, temp_data
+            FROM admin_sessions WHERE user_id = %s
+        ''', (user_id,))
+        
+        row = cursor.fetchone()
+        if row:
+            session = {
+                "state": row["state"] or "",
+                "action": row["action"] or "",
+                "product_id": row["product_id"],
+                "faq_id": row["faq_id"],
+                "customer_id": row["customer_id"],
+                "order_id": row["order_id"],
+                "order_type": row["order_type"] or ""
+            }
+            
+            # Додаємо temp_data
+            if row["temp_data"]:
+                try:
+                    temp_data = json.loads(row["temp_data"])
+                    session.update(temp_data)
+                except:
+                    pass
+            
+            logger.debug(f"✅ Сесію адміна {user_id} завантажено з БД")
+            return session
+        
+        return {"state": ""}
+    except Exception as e:
+        logger.error(f"❌ Помилка завантаження сесії адміна: {e}")
+        return {"state": ""}
+    finally:
+        conn.close()
+
+def clear_admin_session(user_id: int):
+    """Видаляє сесію адміна з БД"""
+    conn = get_db_connection()
+    if not conn:
+        return
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM admin_sessions WHERE user_id = %s', (user_id,))
+        conn.commit()
+        logger.debug(f"✅ Сесію адміна {user_id} видалено з БД")
+    except Exception as e:
+        logger.error(f"❌ Помилка видалення сесії адміна: {e}")
+    finally:
+        conn.close()
+        
 def init_database_if_empty():
     """Ініціалізація бази даних з детальним логуванням"""
     logger.info("=" * 60)
@@ -265,8 +372,22 @@ def init_database_if_empty():
                 position INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )   
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                user_id BIGINT PRIMARY KEY,
+                state TEXT DEFAULT '',
+                action TEXT,
+                product_id INTEGER,
+                faq_id INTEGER,
+                customer_id INTEGER,
+                order_id INTEGER,
+                order_type TEXT,
+                temp_data TEXT DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+logger.info("✅ Таблиця admin_sessions створена")
         
         # Додаємо колонки якщо їх немає
         try:
@@ -4935,6 +5056,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
