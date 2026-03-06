@@ -2443,7 +2443,21 @@ async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Невірний пароль!\n\nСпробуйте ще раз або напишіть /start")
         logger.warning(f"❌ Невірний пароль від адміна {user_id}")
         admin_sessions.pop(user_id, None)
-
+        
+async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Примусовий вхід в систему"""
+    user = update.effective_user
+    user_id = user.id
+    
+    logger.info(f"👤 Адмін {user_id} викликав /login")
+    
+    # Очищаємо стару сесію
+    admin_sessions.pop(user_id, None)
+    last_password_check.pop(user_id, None)
+    
+    admin_sessions[user_id] = {"state": "waiting_password"}
+    await update.message.reply_text("🔐 Будь ласка, введіть пароль:")
+    
 # ========== ОБРОБНИК НАТИСКАНЬ НА КНОПКИ ==========
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4920,5 +4934,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
