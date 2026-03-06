@@ -153,12 +153,10 @@ def init_database():
                 price REAL NOT NULL,
                 category TEXT,
                 description TEXT,
-                unit TEXT DEFAULT 'банка',
+                unit TEXT DEFAULT 'шт',
                 image TEXT,
                 image_data BYTEA,
                 details TEXT,
-                benefits TEXT,
-                usage TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
@@ -215,43 +213,30 @@ def init_database():
         except Exception as e:
             logger.error(f"❌ Помилка додавання колонки image_data: {e}")
         
-        # Додаємо нові колонки для benefits та usage
-        try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS benefits TEXT')
-            logger.info("✅ Колонка benefits додана до таблиці products")
-        except Exception as e:
-            logger.error(f"❌ Помилка додавання колонки benefits: {e}")
-        
-        try:
-            cursor.execute('ALTER TABLE products ADD COLUMN IF NOT EXISTS usage TEXT')
-            logger.info("✅ Колонка usage додана до таблиці products")
-        except Exception as e:
-            logger.error(f"❌ Помилка додавання колонки usage: {e}")
-        
         # Додаємо початкові дані для company_info, якщо їх немає
         cursor.execute("SELECT COUNT(*) FROM company_info")
         company_count = cursor.fetchone()['count']
         
         if company_count == 0:
             company_text = """
-<b>🌱 Компанія Бонелет</b>
+Компанія Бонелет
 
 Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.
 
-<b>📋 Деталі:</b>
-• 👨‍🌾 Працюємо з 2022 року
-• 📍 Розташування: Одеська область, с. Великий Дальник
-• 📞 Телефон: +380932599103
-• 🕒 Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00
-• 🚚 Доставка: Новою Поштою по всій Україні
+Деталі:
+• Працюємо з 2022 року
+• Розташування: Одеська область, с. Великий Дальник
+• Телефон: +380932599103
+• Графік: ПН-ПТ 9:00-18:00 СБ 10:00-15:00
+• Доставка: Новою Поштою по всій Україні
 
-<b>🌿 Наша філософія:</b>
+Наша філософія:
 • Вирощуємо на власних полях Одещини
 • Використовуємо натуральне консервування
 • Гарантуємо якість кожного продукту
 • Працюємо з любов'ю до природи
 
-<b>🚚 Доставка:</b>
+Доставка:
 • Новою Поштою по всій Україні
 • Самовивіз з Одеської області, с. Великий Дальник
 • Терміни доставки: 1-4 дні в залежності від регіону
@@ -266,20 +251,16 @@ def init_database():
         
         if welcome_count == 0:
             welcome_text = """
-<b>🇺🇦 Вітаємо у боті компанії Бонелет! 🌱</b>
+Вітаємо у боті компанії Бонелет!
 
-Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини:
+Ми спеціалізуємося на вирощуванні овочів та фруктів на полях Одещини.
 
-🥫 Артишок маринований з зернами гірчиці - пікантний, не гострий
-🌶️ Артишок маринований з чилі - з нотками гостроти
-🍯 Паштет з артишоку - ніжний для бутербродів
-
-<b>🏢 Про нас:</b>
+Про нас:
 • Працюємо з 2022 року
 • Розташування: Одеська область, с. Великий Дальник
 • Доставка Новою Поштою по всій Україні
 
-<b>Оберіть опцію з меню 👇</b>
+Оберіть опцію з меню
     """
             cursor.execute('''
                 INSERT INTO welcome_message (id, text) VALUES (1, %s)
@@ -291,8 +272,8 @@ def init_database():
         
         if faq_count == 0:
             faqs = [
-                ("Які способи оплати ви приймаєте?", "✅ Готівка при отриманні\n✅ Переказ на карту ПриватБанку\n✅ Оплата через LiqPay", 0),
-                ("Які терміни доставки?", "🚚 Київ - 1-2 дні\n🚚 Україна - 2-4 дні\n🚛 Великі партії - 3-5 днів", 1)
+                ("Які способи оплати ви приймаєте?", "Готівка при отриманні\nПереказ на карту ПриватБанку\nОплата через LiqPay", 0),
+                ("Які терміни доставки?", "Київ - 1-2 дні\nУкраїна - 2-4 дні\nВеликі партії - 3-5 днів", 1)
             ]
             for question, answer, position in faqs:
                 cursor.execute('''
@@ -926,8 +907,7 @@ class Database:
         
         try:
             cursor = conn.cursor()
-            # Додаємо benefits та usage в запит
-            cursor.execute('SELECT id, name, price, category, description, unit, image, details, benefits, usage, created_at FROM products ORDER BY id')
+            cursor.execute('SELECT id, name, price, category, description, unit, image, details, created_at FROM products ORDER BY id')
             rows = cursor.fetchall()
             
             products = []
@@ -940,9 +920,7 @@ class Database:
                     "description": row['description'],
                     "unit": row['unit'],
                     "image": row['image'],
-                    "details": row['details'],
-                    "benefits": row.get('benefits', ''),
-                    "usage": row.get('usage', '')
+                    "details": row['details']
                 }
                 products.append(product)
             return products
@@ -1256,16 +1234,13 @@ def get_products_menu() -> InlineKeyboardMarkup:
     refresh_products()
     buttons = []
     for product in PRODUCTS:
-        # Дворядковий текст з назвою на першому рядку і ціною на другому
         button_text = f"{product['name']}\n{product['price']} грн/{product['unit']}"
-        
-        # Обмежуємо довжину тексту (макс 60 символів)
+        # Обмежуємо довжину тексту
         if len(button_text) > 60:
             name_part = product['name'][:35] + "..." if len(product['name']) > 35 else product['name']
             button_text = f"{name_part}\n{product['price']} грн/{product['unit']}"
             if len(button_text) > 60:
                 button_text = button_text[:57] + "..."
-        
         buttons.append([{
             "text": button_text,
             "callback_data": f"product_{product['id']}"
@@ -1392,36 +1367,15 @@ def get_product_text(product_id: int) -> str:
     if not product:
         return "❌ Продукт не знайдено"
     
-    # ВСЯ інформація береться з БД
-    name = product.get('name', '')
-    description = product.get('description', '')
-    price = product.get('price', 0)
-    unit = product.get('unit', 'банка')
-    category = product.get('category', '')
-    details = product.get('details', '')
-    benefits = product.get('benefits', '• Вирощений на Одещині\n• Натуральне консервування\n• Без штучних добавок\n• Висока якість')
-    usage = product.get('usage', 'Ідеально підходить як закуска, до салатів, м\'ясних страв та як самостійна страва.')
-    emoji = product.get('image', '🥫')
+    # Формуємо мінімалістичний текст товару тільки з назвою та описом
+    text = f"{product['name']}\n\n"
+    text += f"{product['description']}\n\n"
+    text += f"Ціна: {product['price']} грн/{product['unit']}"
     
-    # Формуємо текст ТІЛЬКИ з даних БД
-    text = f"""
-<b>{emoji} {name}</b>
-
-📝 <i>{description}</i>
-
-💰 <b>Ціна:</b> {price} грн/{unit}
-🏷️ <b>Категорія:</b> {category if category else 'Не вказано'}
-📦 <b>Наявність:</b> Є в наявності
-
-<b>📊 Характеристики:</b>
-• {details}
-
-<b>🌟 Переваги:</b>
-{benefits}
-
-<b>💡 Як використовувати:</b>
-{usage}
-"""
+    # Якщо є деталі, додаємо їх окремим рядком
+    if product.get('details'):
+        text += f"\n\n{product['details']}"
+    
     return text
 
 def get_quick_order_text(product_id: int) -> str:
@@ -1431,16 +1385,16 @@ def get_quick_order_text(product_id: int) -> str:
         return "❌ Продукт не знайдено"
     
     return f"""
-<b>⚡ Швидке замовлення: {product['name']}</b>
+Швидке замовлення: {product['name']}
 
-💰 <b>Ціна:</b> {product['price']} грн/{product['unit']}
+Ціна: {product['price']} грн/{product['unit']}
 
-💬 <b>Як ви бажаєте, щоб ми з вами зв'язалися?</b>
+Як ви бажаєте, щоб ми з вами зв'язалися?
 
-📞 <b>Зателефонуйте мені</b> - ми зателефонуємо вам для уточнення деталей
-💬 <b>Напишіть мені в чат</b> - ви можете написати всі деталі тут і ми відповімо
+📞 Зателефонуйте мені - ми зателефонуємо вам для уточнення деталей
+💬 Напишіть мені в чат - ви можете написати всі деталі тут і ми відповімо
 
-<i>Оберіть зручний для вас спосіб зв'язку 👇</i>
+Оберіть зручний для вас спосіб зв'язку
 """
 
 def get_faq_text(faq_id: int) -> str:
@@ -1455,11 +1409,11 @@ def get_faq_text(faq_id: int) -> str:
         row = cursor.fetchone()
         if row:
             return f"""
-<b>❔ {row['question']}</b>
+{row['question']}
 
 {row['answer']}
 
-<i>📞 Маєте інші запитання? Зв'яжіться з нами: +380932599103</i>
+Маєте інші запитання? Зв'яжіться з нами: +380932599103
             """
         return "❌ Питання не знайдено"
     except Exception as e:
@@ -1470,51 +1424,51 @@ def get_faq_text(faq_id: int) -> str:
 
 def get_contact_text() -> str:
     return """
-<b>📞 Зв'язок з нами</b>
+Зв'язок з нами
 
 Ми завжди раді допомогти вам!
 
-<b>Оберіть спосіб зв'язку:</b>
-• <b>Телефон</b> - для швидких запитань
-• <b>Адреса</b> - для самовивозу
-• <b>Написати тут</b> - швидке повідомлення в чаті
+Оберіть спосіб зв'язку:
+• Телефон - для швидких запитань
+• Адреса - для самовивозу
+• Написати тут - швидке повідомлення в чаті
 
-<i>Просто напишіть нам повідомлення в цьому чаті 👇</i>
+Просто напишіть нам повідомлення в цьому чаті
     """
 
 def get_cart_text(cart_items: List[Dict]) -> str:
     if not cart_items:
-        return "🛒 <b>Ваша корзина порожня</b>\n\nДодайте товари з каталогу!"
+        return "🛒 Ваша корзина порожня\n\nДодайте товари з каталогу!"
     
-    text = "🛒 <b>Ваша корзина</b>\n\n"
+    text = "🛒 Ваша корзина\n\n"
     total = 0
     
     for i, item in enumerate(cart_items, 1):
         quantity = item["quantity"]
         product = item["product"]
         item_total = product["price"] * quantity
-        text += f"<b>{i}. {product['name']}</b>\n"
-        text += f"   📊 Кількість: <b>{quantity} {product['unit']}</b>\n"
-        text += f"   💰 Ціна: {product['price']} грн/{product['unit']} × {quantity} = <b>{item_total:.2f} грн</b>\n\n"
+        text += f"{i}. {product['name']}\n"
+        text += f"   Кількість: {quantity} {product['unit']}\n"
+        text += f"   Ціна: {product['price']} грн/{product['unit']} × {quantity} = {item_total:.2f} грн\n\n"
         total += item_total
     
-    text += f"<b>📊 Всього товарів:</b> {len(cart_items)}\n"
-    text += f"<b>💰 Загальна сума:</b> <b>{total:.2f} грн</b>\n\n"
+    text += f"Всього товарів: {len(cart_items)}\n"
+    text += f"Загальна сума: {total:.2f} грн\n\n"
     
     if len(cart_items) >= 3:
         discount = total * 0.05
         discount_total = total - discount
-        text += f"🎁 <b>Знижка 5% за 3+ банок:</b> -{discount:.2f} грн\n"
-        text += f"💵 <b>До сплати:</b> <b>{discount_total:.2f} грн</b>\n\n"
+        text += f"Знижка 5% за 3+ банок: -{discount:.2f} грн\n"
+        text += f"До сплати: {discount_total:.2f} грн\n\n"
     
-    text += "<i>Для оформлення замовлення натисніть кнопку нижче</i>"
+    text += "Для оформлення замовлення натисніть кнопку нижче"
     return text
 
 def get_my_orders_text(orders: List[Dict]) -> str:
     if not orders:
-        return "📋 <b>У вас ще немає замовлень</b>\n\nЗробіть перше замовлення в розділі 'Наші продукти'!"
+        return "📋 У вас ще немає замовлень\n\nЗробіть перше замовлення в розділі 'Наші продукти'!"
     
-    text = "📋 <b>Мої замовлення</b>\n\n"
+    text = "📋 Мої замовлення\n\n"
     for order in orders:
         text += f"№{order['order_id']} | {order['created_at'][:16]}\n"
         text += f"Сума: {order['total']:.2f} грн | Статус: {order['status']}\n"
@@ -1588,14 +1542,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_text(welcome, reply_markup=get_main_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="main_menu")
             elif back_target == "products":
-                products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+                products_text = "📦 Наші продукти\n\nОберіть продукт для детальної інформації:"
                 try:
                     await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
                 except Exception:
                     await query.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
                 Database.save_user_session(user_id, last_section="products")
             elif back_target == "faq":
-                faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
+                faq_text = "❓ Часті запитання\n\nОберіть питання для отримання відповіді:"
                 try:
                     await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
                 except Exception:
@@ -1641,13 +1595,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         elif data == "products":
-            products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+            products_text = "📦 Наші продукти\n\nОберіть продукт для детальної інформації:"
             await query.edit_message_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="products")
             return
         
         elif data == "faq":
-            faq_text = "❓ <b>Часті запитання</b>\n\nОберіть питання для отримання відповіді:"
+            faq_text = "❓ Часті запитання\n\nОберіть питання для отримання відповіді:"
             await query.edit_message_text(faq_text, reply_markup=get_faq_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="faq")
             return
@@ -1674,28 +1628,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data in ["call_us", "our_address"]:
             if data == "call_us":
-                contact_info = "📞 <b>Телефон для зв'язку:</b>\n\n"
-                contact_info += "✅ <code>+380932599103</code>\n\n"
-                contact_info += "<i>Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
+                contact_info = "📞 Телефон для зв'язку:\n\n"
+                contact_info += "+380932599103\n\n"
+                contact_info += "Графік роботи: Пн-Пт 9:00-18:00, Сб 10:00-15:00"
             else:
-                contact_info = "📍 <b>Наша адреса:</b>\n\n"
-                contact_info += "🏠 Одеська область\n"
-                contact_info += "📌 село Великий Дальник\n"
-                contact_info += "🚗 <b>Самовивіз можливий за попереднім домовленням</b>\n\n"
-                contact_info += "<i>Графік самовивозу: Пн-Пт 9:00-18:00, Сб 10:00-15:00</i>"
+                contact_info = "📍 Наша адреса:\n\n"
+                contact_info += "Одеська область\n"
+                contact_info += "село Великий Дальник\n"
+                contact_info += "Самовивіз можливий за попереднім домовленням\n\n"
+                contact_info += "Графік самовивозу: Пн-Пт 9:00-18:00, Сб 10:00-15:00"
             
             await query.edit_message_text(contact_info, reply_markup=get_back_keyboard("contact"), parse_mode='HTML')
             return
         
         elif data == "write_here":
             Database.save_user_session(user_id, "waiting_message")
-            response = "💬 <b>Написати нам тут</b>\n\n"
+            response = "💬 Написати нам тут\n\n"
             response += "Напишіть ваше повідомлення прямо в цьому чаті:\n\n"
             response += "• Питання про продукти\n"
             response += "• Консультація\n"
             response += "• Пропозиції співпраці\n"
             response += "• Інші питання\n\n"
-            response += "<i>Ми відповімо вам найближчим часом!</i>"
+            response += "Ми відповімо вам найближчим часом!"
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             return
         
@@ -1750,10 +1704,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temp_data = {"product_id": product_id}
             Database.save_user_session(user_id, "waiting_quantity", temp_data)
             
-            response = f"📦 <b>Додавання {product['name']} до кошика</b>\n\n"
+            response = f"📦 Додавання {product['name']} до кошика\n\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
-            response += "📊 <b>Введіть кількість (тільки число):</b>\n\n"
-            response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
+            response += "📊 Введіть кількість (тільки число):\n\n"
+            response += f"Наприклад: 1, 2, 3 (в {product['unit']})"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             return
@@ -1805,11 +1759,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temp_data = {"product_id": product_id}
             Database.save_user_session(user_id, "waiting_phone_for_quick_order", temp_data)
             
-            response = f"📞 <b>Зателефонуйте мені: {product['name']}</b>\n\n"
+            response = f"📞 Зателефонуйте мені: {product['name']}\n\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
-            response += "📱 <b>Введіть ваш номер телефону:</b>\n\n"
-            response += "<i>Приклад: +380932599103 або 0932599103</i>\n\n"
-            response += "<b>Ми зателефонуємо вам для уточнення деталей замовлення!</b>"
+            response += "📱 Введіть ваш номер телефону:\n\n"
+            response += "Приклад: +380932599103 або 0932599103\n\n"
+            response += "Ми зателефонуємо вам для уточнення деталей замовлення!"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             return
@@ -1840,14 +1794,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.save_user_session(user_id, "waiting_message_for_quick_order", {"order_id": order_id, "product_name": product['name']})
             
-            response = f"💬 <b>Напишіть мені в чат: {product['name']}</b>\n\n"
+            response = f"💬 Напишіть мені в чат: {product['name']}\n\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n\n"
-            response += "💬 <b>Просто напишіть ваше повідомлення в цей чат!</b>\n\n"
+            response += "💬 Просто напишіть ваше повідомлення в цей чат!\n\n"
             response += "Вкажіть:\n"
             response += "• Бажану кількість\n"
             response += "• Контактні дані\n"
             response += "• Бажаний час доставки\n\n"
-            response += "<b>Ми відповімо вам найближчим часом для уточнення деталей замовлення!</b>"
+            response += "Ми відповімо вам найближчим часом для уточнення деталей замовлення!"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             
@@ -1884,29 +1838,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cart_items = Database.get_cart_items(user_id)
             
             if not cart_items:
-                response = "🛒 <b>Ваша корзина порожня</b>\n\n"
+                response = "🛒 Ваша корзина порожня\n\n"
                 response += "Додайте товари з каталогу перед оформленням замовлення!"
                 await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
                 return
             
             Database.save_user_session(user_id, "full_order_name", {})
             
-            response = "🛒 <b>Оформлення замовлення</b>\n\n"
-            response += f"📦 У вашій корзині: <b>{len(cart_items)} товар(ів)</b>\n"
+            response = "🛒 Оформлення замовлення\n\n"
+            response += f"📦 У вашій корзині: {len(cart_items)} товар(ів)\n"
             
             total = sum(item["product"]["price"] * item["quantity"] for item in cart_items)
-            response += f"💰 Загальна сума: <b>{total:.2f} грн</b>\n\n"
-            response += "📝 <b>Введіть ваше ПІБ (повне ім'я):</b>\n\n"
-            response += "<i>Наприклад: Іванов Іван Іванович</i>"
+            response += f"💰 Загальна сума: {total:.2f} грн\n\n"
+            response += "📝 Введіть ваше ПІБ (повне ім'я):\n\n"
+            response += "Наприклад: Іванов Іван Іванович"
             
             await context.bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             return
         
         elif data == "clear_cart":
             Database.clear_cart(user_id)
-            response = "🗑️ <b>Корзина очищена!</b>\n\n"
+            response = "🗑️ Корзина очищена!\n\n"
             response += "Ваша корзина тепер порожня.\n"
-            response += "<i>Додайте товари з каталогу.</i>"
+            response += "Додайте товари з каталогу."
             await query.edit_message_text(response, reply_markup=get_back_keyboard("main_menu"), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
             return
@@ -1952,30 +1906,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         Database.clear_user_session(user_id)
                         
-                        text = f"✅ <b>Замовлення оформлено!</b>\n\n"
-                        text += f"🆔 Номер замовлення: <b>#{order_id}</b>\n"
-                        text += f"👤 ПІБ: <b>{temp_data.get('user_name', '')}</b>\n"
-                        text += f"📱 Телефон: <b>{temp_data.get('phone', '')}</b>\n"
-                        text += f"🏙️ Місто: <b>{temp_data.get('city', '')}</b>\n"
-                        text += f"🏣 Відділення Нової Пошти: <b>{temp_data.get('np_department', '')}</b>\n"
-                        text += f"💰 Сума: <b>{temp_data.get('total', 0):.2f} грн</b>\n\n"
-                        text += "📞 <b>Ми зв'яжемось з вами для підтвердження!</b>\n\n"
-                        text += "<i>Дякуємо за замовлення! 🌱</i>"
+                        text = f"✅ Замовлення оформлено!\n\n"
+                        text += f"🆔 Номер замовлення: #{order_id}\n"
+                        text += f"👤 ПІБ: {temp_data.get('user_name', '')}\n"
+                        text += f"📱 Телефон: {temp_data.get('phone', '')}\n"
+                        text += f"🏙️ Місто: {temp_data.get('city', '')}\n"
+                        text += f"🏣 Відділення Нової Пошти: {temp_data.get('np_department', '')}\n"
+                        text += f"💰 Сума: {temp_data.get('total', 0):.2f} грн\n\n"
+                        text += "📞 Ми зв'яжемось з вами для підтвердження!\n\n"
+                        text += "Дякуємо за замовлення!"
                     else:
-                        text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
+                        text = "❌ Помилка оформлення замовлення!\n\n"
                         text += "Будь ласка, спробуйте ще раз або зв'яжіться з нами.\n\n"
-                        text += "<i>Вибачте за незручності.</i>"
+                        text += "Вибачте за незручності."
                         Database.clear_user_session(user_id)
                 except Exception as e:
                     logger.error(f"❌ Помилка при створенні замовлення: {e}")
-                    text = "❌ <b>Помилка оформлення замовлення!</b>\n\n"
+                    text = "❌ Помилка оформлення замовлення!\n\n"
                     text += "Будь ласка, спробуйте ще раз.\n\n"
-                    text += "<i>Вибачте за незручності.</i>"
+                    text += "Вибачте за незручності."
                     Database.clear_user_session(user_id)
             else:
-                text = "❌ <b>Замовлення скасовано</b>\n\n"
+                text = "❌ Замовлення скасовано\n\n"
                 text += "Ви можете продовжити покупки.\n"
-                text += "<i>Ваша корзина збережена.</i>"
+                text += "Ваша корзина збережена."
                 Database.clear_user_session(user_id)
             
             await query.edit_message_text(text, reply_markup=get_main_menu(), parse_mode='HTML')
@@ -1991,7 +1945,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Помилка обробки callback: {e}")
         try:
-            text = "❌ <b>Сталася помилка</b>\n\n"
+            text = "❌ Сталася помилка\n\n"
             text += "Будь ласка, спробуйте ще раз або використайте /start"
             keyboard = get_main_menu()
             await query.edit_message_text(text, keyboard, parse_mode='HTML')
@@ -2047,11 +2001,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success, quantity, error_msg = parse_quantity(text)
             
             if not success:
-                response = f"❌ <b>Невірний формат!</b>\n\n{error_msg}\n\n"
-                response += f"<b>Продукт:</b> {product['name']}\n"
-                response += f"<b>Ціна:</b> {product['price']} грн/{product['unit']}\n\n"
-                response += "📊 <b>Введіть кількість (тільки число):</b>\n"
-                response += f"<i>Наприклад: 1, 2, 3 (в {product['unit']})</i>"
+                response = f"❌ Невірний формат!\n\n{error_msg}\n\n"
+                response += f"Продукт: {product['name']}\n"
+                response += f"Ціна: {product['price']} грн/{product['unit']}\n\n"
+                response += "📊 Введіть кількість (тільки число):\n"
+                response += f"Наприклад: 1, 2, 3 (в {product['unit']})"
                 await update.message.reply_text(response, parse_mode='HTML')
                 return
             
@@ -2059,18 +2013,18 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             Database.clear_user_session(user_id)
             
             total_price = product["price"] * quantity
-            response = f"✅ <b>{product['name']}</b> додано до кошика!\n\n"
-            response += f"📊 Кількість: <b>{quantity} {product['unit']}</b>\n"
+            response = f"✅ {product['name']} додано до кошика!\n\n"
+            response += f"📊 Кількість: {quantity} {product['unit']}\n"
             response += f"💰 Ціна: {product['price']} грн/{product['unit']}\n"
-            response += f"💵 Сума: <b>{total_price:.2f} грн</b>\n\n"
+            response += f"💵 Сума: {total_price:.2f} грн\n\n"
             
             cart_items = Database.get_cart_items(user_id)
-            response += f"🛒 У кошику: <b>{len(cart_items)} товар(ів)</b>\n\n"
-            response += "<i>Продовжуйте додавати товари або перейдіть до оформлення замовлення.</i>"
+            response += f"🛒 У кошику: {len(cart_items)} товар(ів)\n\n"
+            response += "Продовжуйте додавати товари або перейдіть до оформлення замовлення."
             
             await update.message.reply_text(response, parse_mode='HTML')
             
-            products_text = "📦 <b>Наші продукти</b>\n\nОберіть продукт для детальної інформації:"
+            products_text = "📦 Наші продукти\n\nОберіть продукт для детальної інформації:"
             await update.message.reply_text(products_text, reply_markup=get_products_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="products")
             return
@@ -2102,9 +2056,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🕒 Час: {datetime.now().isoformat()}")
             logger.info(f"{'='*80}\n")
             
-            response = "✅ <b>Повідомлення отримано!</b>\n\n"
+            response = "✅ Повідомлення отримано!\n\n"
             response += "Ми відповімо вам найближчим часом.\n"
-            response += "<i>Дякуємо за звернення! 🌱</i>"
+            response += "Дякуємо за звернення!"
             
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.clear_user_session(user_id)
@@ -2156,12 +2110,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"💬 Повідомлення: {text}")
             logger.info(f"{'='*80}\n")
             
-            response = f"✅ <b>Дякуємо! Ваше повідомлення отримано!</b>\n\n"
-            response += f"🆔 <b>Номер замовлення:</b> #{order_id}\n"
-            response += f"📦 <b>Продукт:</b> {product_name}\n"
-            response += f"💬 <b>Ваше повідомлення:</b> {text}\n\n"
-            response += "<b>Ми зв'яжемося з вами найближчим часом для уточнення деталей!</b>\n\n"
-            response += "<i>Дякуємо за замовлення! 🌱</i>"
+            response = f"✅ Дякуємо! Ваше повідомлення отримано!\n\n"
+            response += f"🆔 Номер замовлення: #{order_id}\n"
+            response += f"📦 Продукт: {product_name}\n"
+            response += f"💬 Ваше повідомлення: {text}\n\n"
+            response += "Ми зв'яжемося з вами найближчим часом для уточнення деталей!\n\n"
+            response += "Дякуємо за замовлення!"
             
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.clear_user_session(user_id)
@@ -2174,8 +2128,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temp_data["username"] = user.username or "немає"
                 Database.save_user_session(user_id, "full_order_phone", temp_data)
                 
-                response = "📱 <b>Введіть ваш номер телефону:</b>\n\n"
-                response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                response = "📱 Введіть ваш номер телефону:\n\n"
+                response += "Приклад: +380932599103 або 0932599103"
                 await update.message.reply_text(response, parse_mode='HTML')
                 return
             
@@ -2184,17 +2138,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 is_valid, formatted_phone = validate_phone(phone)
                 
                 if not is_valid:
-                    response = f"❌ <b>Невірний номер телефону!</b>\n\n"
-                    response += "📱 <b>Введіть ваш номер телефону ще раз:</b>\n"
-                    response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                    response = f"❌ Невірний номер телефону!\n\n"
+                    response += "📱 Введіть ваш номер телефону ще раз:\n"
+                    response += "Приклад: +380932599103 або 0932599103"
                     await update.message.reply_text(response, parse_mode='HTML')
                     return
                 
                 temp_data["phone"] = formatted_phone
                 Database.save_user_session(user_id, "full_order_city", temp_data)
                 
-                response = "🏙️ <b>Введіть місто доставки:</b>\n\n"
-                response += "<i>Наприклад: Київ, Львів, Одеса</i>"
+                response = "🏙️ Введіть місто доставки:\n\n"
+                response += "Наприклад: Київ, Львів, Одеса"
                 await update.message.reply_text(response, parse_mode='HTML')
                 return
             
@@ -2202,8 +2156,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temp_data["city"] = text
                 Database.save_user_session(user_id, "full_order_np", temp_data)
                 
-                response = "🏣 <b>Введіть номер відділення Нової Пошти:</b>\n\n"
-                response += "<i>Наприклад: Відділення №25, Поштомат №12345</i>"
+                response = "🏣 Введіть номер відділення Нової Пошти:\n\n"
+                response += "Наприклад: Відділення №25, Поштомат №12345"
                 await update.message.reply_text(response, parse_mode='HTML')
                 return
             
@@ -2231,20 +2185,20 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temp_data["items"] = order_items
                 Database.save_user_session(user_id, "full_order_confirm", temp_data)
                 
-                response = "✅ <b>Дані отримано! Перевірте інформацію:</b>\n\n"
-                response += f"👤 <b>ПІБ:</b> {temp_data.get('user_name', '')}\n"
-                response += f"📱 <b>Телефон:</b> {temp_data.get('phone', '')}\n"
-                response += f"🏙️ <b>Місто:</b> {temp_data.get('city', '')}\n"
-                response += f"🏣 <b>Відділення Нової Пошти:</b> {text}\n"
-                response += f"🛒 <b>Товарів у кошику:</b> {len(cart_items)}\n"
+                response = "✅ Дані отримано! Перевірте інформацію:\n\n"
+                response += f"👤 ПІБ: {temp_data.get('user_name', '')}\n"
+                response += f"📱 Телефон: {temp_data.get('phone', '')}\n"
+                response += f"🏙️ Місто: {temp_data.get('city', '')}\n"
+                response += f"🏣 Відділення Нової Пошти: {text}\n"
+                response += f"🛒 Товарів у кошику: {len(cart_items)}\n"
                 
                 if len(cart_items) >= 3:
                     original_total = sum(item["product"]["price"] * item["quantity"] for item in cart_items)
                     discount = original_total * 0.05
-                    response += f"🎁 <b>Знижка 5% за 3+ банок:</b> -{discount:.2f} грн\n"
+                    response += f"🎁 Знижка 5% за 3+ банок: -{discount:.2f} грн\n"
                 
-                response += f"💰 <b>Загальна сума:</b> {total:.2f} грн\n\n"
-                response += "<b>Підтвердити замовлення?</b>"
+                response += f"💰 Загальна сума: {total:.2f} грн\n\n"
+                response += "Підтвердити замовлення?"
                 
                 await update.message.reply_text(response, reply_markup=get_order_confirmation_keyboard(), parse_mode='HTML')
                 return
@@ -2263,9 +2217,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_valid, formatted_phone = validate_phone(phone)
             
             if not is_valid:
-                response = f"❌ <b>Невірний номер телефону!</b>\n\n"
-                response += "📱 <b>Введіть ваш номер телефону ще раз:</b>\n"
-                response += "<i>Приклад: +380932599103 або 0932599103</i>"
+                response = f"❌ Невірний номер телефону!\n\n"
+                response += "📱 Введіть ваш номер телефону ще раз:\n"
+                response += "Приклад: +380932599103 або 0932599103"
                 await update.message.reply_text(response, parse_mode='HTML')
                 return
             
@@ -2314,12 +2268,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             Database.clear_user_session(user_id)
             
-            response = f"✅ <b>Швидке замовлення прийнято!</b>\n\n"
-            response += f"🆔 <b>Номер замовлення:</b> #{order_id}\n"
-            response += f"📦 <b>Продукт:</b> {product['name']}\n"
-            response += f"📞 <b>Ваш телефон:</b> {formatted_phone}\n\n"
-            response += "<b>Ми зателефонуємо вам найближчим часом для уточнення деталей!</b>\n\n"
-            response += "<i>Дякуємо за замовлення! 🌱</i>"
+            response = f"✅ Швидке замовлення прийнято!\n\n"
+            response += f"🆔 Номер замовлення: #{order_id}\n"
+            response += f"📦 Продукт: {product['name']}\n"
+            response += f"📞 Ваш телефон: {formatted_phone}\n\n"
+            response += "Ми зателефонуємо вам найближчим часом для уточнення деталей!\n\n"
+            response += "Дякуємо за замовлення!"
             
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
@@ -2343,9 +2297,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             log_message(message_data)
             
-            response = "✅ <b>Повідомлення отримано!</b>\n\n"
+            response = "✅ Повідомлення отримано!\n\n"
             response += "Ми відповімо вам найближчим часом.\n"
-            response += "<i>Дякуємо за звернення! 🌱</i>"
+            response += "Дякуємо за звернення!"
             
             await update.message.reply_text(response, reply_markup=get_main_menu(), parse_mode='HTML')
             Database.save_user_session(user_id, last_section="main_menu")
@@ -2365,7 +2319,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
-                    text="❌ <b>Виникла помилка</b>\n\nБудь ласка, спробуйте ще раз або використайте /start",
+                    text="❌ Виникла помилка\n\nБудь ласка, спробуйте ще раз або використайте /start",
                     parse_mode='HTML'
                 )
             except:
