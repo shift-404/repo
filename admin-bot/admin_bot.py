@@ -4918,6 +4918,7 @@ def main():
         application = Application.builder().token(TOKEN).build()
         
         application.add_handler(CommandHandler("start", start))
+        application.add_handler(CommandHandler("login", login_command))  # ← додайте цей рядок
         application.add_handler(CallbackQueryHandler(button_handler))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
         application.add_handler(MessageHandler(filters.PHOTO, message_handler))
@@ -4934,6 +4935,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
