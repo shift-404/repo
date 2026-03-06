@@ -4837,9 +4837,11 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if isinstance(context.error, Conflict):
             logger.error("❌ Конфлікт з іншим екземпляром бота! Переконайтеся, що запущено тільки один екземпляр.")
+            # Не викидаємо помилку далі, просто логуємо
             return
         
         logger.error(f"Помилка: {context.error}")
+        logger.error(traceback.format_exc())
     except Exception as e:
         logger.error(f"Помилка в обробнику помилок: {e}")
 
@@ -4913,3 +4915,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
