@@ -1368,9 +1368,7 @@ def get_product_text(product_id: int) -> str:
         return "❌ Продукт не знайдено"
     
     # Формуємо текст товару ТІЛЬКИ з поля description
-   #text = f"{product['name']}\n\n"
-    text += f"{product['description']}\n\n"
-   # text += f"Ціна: {product['price']} грн/{product['unit']}"
+    text = f"{product['description']}"
     
     # БІЛЬШЕ НІЧОГО НЕ ДОДАЄМО!
     # Ніяких details, ніяких додаткових полів
@@ -2393,6 +2391,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
